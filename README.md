@@ -5,7 +5,7 @@ as a build system and as a standalone application.
 
 # Prerequisites
 
-- Install the Oculus openXR API.
+- Install the [Oculus openXR API](https://developer.oculus.com/downloads/package/oculus-openxr-mobile-sdk/)
 - Edit `app/src/main/cpp/CMakeLists.txt` and point it to the openXR API:
   `set(OCULUS_OPENXR_MOBILE_SDK /home/bernd/ovr_openxr_mobile_sdk)`
 
