@@ -1,7 +1,7 @@
 # OculusSpatialAnchor
 
 Oculus Quest 2 demo `XrSpatialAnchor` but with cmake
-as a build system and separated from the API.
+as a build system and as a standalone application.
 
 # Prerequisites
 
