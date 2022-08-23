@@ -6,7 +6,7 @@ android {
     compileSdk 32
 
     defaultConfig {
-        applicationId "tech.glasgowneuro.oculusecg"
+        applicationId "tech.glasgowneuro.oculusspatialanchor"
         minSdk 29
         targetSdk 32
         versionCode 1

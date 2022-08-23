@@ -1,4 +1,4 @@
-package tech.glasgowneuro.oculusecg;
+package tech.glasgowneuro.oculusspatialanchor;
 
 import org.junit.Test;
 

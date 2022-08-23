@@ -7,7 +7,7 @@ cmake_minimum_required(VERSION 3.18.1)
 
 # Declares and names the project.
 
-project("oculusecg")
+project("oculusspatialanchor")
 
 # set it to the oculus API
 set(OCULUS_OPENXR_MOBILE_SDK /home/bp1/sandbox/ovr_openxr_mobile_sdk)
@@ -36,7 +36,7 @@ add_library(native_app_glue STATIC
         ${ANDROID_NDK}/sources/android/native_app_glue/android_native_app_glue.c)
 
 add_library( # Sets the name of the library.
-        oculusecg
+        oculusspatialanchor
 
         # Sets the library as a shared library.
         SHARED
@@ -65,7 +65,7 @@ find_library( # Sets the name of the path variable.
 # set (CMAKE_CXX_LINK_LIBRARY_FLAG "-u ANativeActivity_onCreate")
 
 target_link_libraries( # Specifies the target library.
-        oculusecg
+        oculusspatialanchor
 
         openxr_loader
         nativewindow
