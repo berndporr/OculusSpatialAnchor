@@ -51,39 +51,39 @@ using namespace OVR;
 
 #if !defined(GL_EXT_multisampled_render_to_texture)
 typedef void(GL_APIENTRY* PFNGLRENDERBUFFERSTORAGEMULTISAMPLEEXTPROC)(
-    GLenum target,
-    GLsizei samples,
-    GLenum internalformat,
-    GLsizei width,
-    GLsizei height);
+        GLenum target,
+        GLsizei samples,
+        GLenum internalformat,
+        GLsizei width,
+        GLsizei height);
 typedef void(GL_APIENTRY* PFNGLFRAMEBUFFERTEXTURE2DMULTISAMPLEEXTPROC)(
-    GLenum target,
-    GLenum attachment,
-    GLenum textarget,
-    GLuint texture,
-    GLint level,
-    GLsizei samples);
+        GLenum target,
+        GLenum attachment,
+        GLenum textarget,
+        GLuint texture,
+        GLint level,
+        GLsizei samples);
 #endif
 
 #if !defined(GL_OVR_multiview)
 typedef void(GL_APIENTRY* PFNGLFRAMEBUFFERTEXTUREMULTIVIEWOVRPROC)(
-    GLenum target,
-    GLenum attachment,
-    GLuint texture,
-    GLint level,
-    GLint baseViewIndex,
-    GLsizei numViews);
+        GLenum target,
+        GLenum attachment,
+        GLuint texture,
+        GLint level,
+        GLint baseViewIndex,
+        GLsizei numViews);
 #endif
 
 #if !defined(GL_OVR_multiview_multisampled_render_to_texture)
 typedef void(GL_APIENTRY* PFNGLFRAMEBUFFERTEXTUREMULTISAMPLEMULTIVIEWOVRPROC)(
-    GLenum target,
-    GLenum attachment,
-    GLuint texture,
-    GLint level,
-    GLsizei samples,
-    GLint baseViewIndex,
-    GLsizei numViews);
+        GLenum target,
+        GLenum attachment,
+        GLuint texture,
+        GLint level,
+        GLsizei samples,
+        GLint baseViewIndex,
+        GLsizei numViews);
 #endif
 
 #define DEBUG 1
@@ -106,13 +106,13 @@ OpenGL-ES Utility Functions
 */
 
 namespace {
-struct OpenGLExtensions_t {
-    bool multi_view; // GL_OVR_multiview, GL_OVR_multiview2
-    bool EXT_texture_border_clamp; // GL_EXT_texture_border_clamp, GL_OES_texture_border_clamp
-    bool EXT_sRGB_write_control;
-};
+    struct OpenGLExtensions_t {
+        bool multi_view; // GL_OVR_multiview, GL_OVR_multiview2
+        bool EXT_texture_border_clamp; // GL_EXT_texture_border_clamp, GL_OES_texture_border_clamp
+        bool EXT_sRGB_write_control;
+    };
 
-OpenGLExtensions_t glExtensions;
+    OpenGLExtensions_t glExtensions;
 } // namespace
 
 static void EglInitExtensions() {
@@ -120,11 +120,11 @@ static void EglInitExtensions() {
     const char* allExtensions = (const char*)glGetString(GL_EXTENSIONS);
     if (allExtensions != nullptr) {
         glExtensions.multi_view = strstr(allExtensions, "GL_OVR_multiview2") &&
-            strstr(allExtensions, "GL_OVR_multiview_multisampled_render_to_texture");
+                                  strstr(allExtensions, "GL_OVR_multiview_multisampled_render_to_texture");
 
         glExtensions.EXT_texture_border_clamp =
-            strstr(allExtensions, "GL_EXT_texture_border_clamp") ||
-            strstr(allExtensions, "GL_OES_texture_border_clamp");
+                strstr(allExtensions, "GL_EXT_texture_border_clamp") ||
+                strstr(allExtensions, "GL_OES_texture_border_clamp");
         glExtensions.EXT_sRGB_write_control = strstr(allExtensions, "GL_EXT_sRGB_write_control");
     }
 }
@@ -207,9 +207,9 @@ struct ovrVertexAttribute {
 };
 
 static ovrVertexAttribute ProgramVertexAttributes[] = {
-    {VERTEX_ATTRIBUTE_LOCATION_POSITION, "vertexPosition"},
-    {VERTEX_ATTRIBUTE_LOCATION_COLOR, "vertexColor"},
-    {VERTEX_ATTRIBUTE_LOCATION_UV, "vertexUv"}};
+        {VERTEX_ATTRIBUTE_LOCATION_POSITION, "vertexPosition"},
+        {VERTEX_ATTRIBUTE_LOCATION_COLOR, "vertexColor"},
+        {VERTEX_ATTRIBUTE_LOCATION_UV, "vertexUv"}};
 
 void ovrGeometry::Clear() {
     VertexBuffer = 0;
@@ -230,31 +230,31 @@ void ovrGeometry::CreateCube() {
     };
 
     static const ovrCubeVertices cubeVertices = {// positions
-                                                 {{-127, -127, -127, +127},
-                                                  {+127, -127, -127, +127},
-                                                  {-127, +127, -127, +127},
-                                                  {+127, +127, -127, +127},
-                                                  {-127, -127, +127, +127},
-                                                  {+127, -127, +127, +127},
-                                                  {-127, +127, +127, +127},
-                                                  {+127, +127, +127, +127}},
-                                                 // colors
-                                                 {{0x00, 0x00, 0x00, 0xff},
-                                                  {0xff, 0x00, 0x00, 0xff},
-                                                  {0x00, 0xff, 0x00, 0xff},
-                                                  {0xff, 0xff, 0x00, 0xff},
-                                                  {0x00, 0x00, 0xff, 0xff},
-                                                  {0xff, 0x00, 0xff, 0xff},
-                                                  {0x00, 0xff, 0xff, 0xff},
-                                                  {0xff, 0xff, 0xff, 0xff}}};
+            {{-127, -127, -127, +127},
+                    {+127, -127, -127, +127},
+                    {-127, +127, -127, +127},
+                    {+127, +127, -127, +127},
+                    {-127, -127, +127, +127},
+                    {+127, -127, +127, +127},
+                    {-127, +127, +127, +127},
+                    {+127, +127, +127, +127}},
+            // colors
+            {{0x00, 0x00, 0x00, 0xff},
+                    {0xff, 0x00, 0x00, 0xff},
+                    {0x00, 0xff, 0x00, 0xff},
+                    {0xff, 0xff, 0x00, 0xff},
+                    {0x00, 0x00, 0xff, 0xff},
+                    {0xff, 0x00, 0xff, 0xff},
+                    {0x00, 0xff, 0xff, 0xff},
+                    {0xff, 0xff, 0xff, 0xff}}};
 
     static const unsigned short cubeIndices[36] = {
-        0, 2, 1, 2, 3, 1, // back
-        4, 5, 6, 6, 5, 7, // front
-        6, 7, 2, 2, 7, 3, // top
-        4, 0, 5, 5, 0, 1, // bottom
-        0, 4, 2, 2, 4, 6, // left
-        5, 1, 7, 7, 1, 3 // right
+            0, 2, 1, 2, 3, 1, // back
+            4, 5, 6, 6, 5, 7, // front
+            6, 7, 2, 2, 7, 3, // top
+            4, 0, 5, 5, 0, 1, // bottom
+            0, 4, 2, 2, 4, 6, // left
+            5, 1, 7, 7, 1, 3 // right
     };
 
     VertexCount = 8;
@@ -292,24 +292,24 @@ void ovrGeometry::CreateAxes() {
     };
 
     static const ovrAxesVertices axesVertices = {
-        // positions
-        {{0, 0, 0}, {1, 0, 0}, {0, 0, 0}, {0, 1, 0}, {0, 0, 0}, {0, 0, 1}},
-        // colors
-        {{255, 0, 0, 255},
-         {255, 0, 0, 255},
-         {0, 255, 0, 255},
-         {0, 255, 0, 255},
-         {0, 0, 255, 255},
-         {0, 0, 255, 255}},
+            // positions
+            {{0, 0, 0}, {1, 0, 0}, {0, 0, 0}, {0, 1, 0}, {0, 0, 0}, {0, 0, 1}},
+            // colors
+            {{255, 0, 0, 255},
+                        {255, 0, 0, 255},
+                                   {0, 255, 0, 255},
+                                              {0, 255, 0, 255},
+                                                         {0, 0, 255, 255},
+                                                                    {0, 0, 255, 255}},
     };
 
     static const unsigned short axesIndices[6] = {
-        0,
-        1, // x axis - red
-        2,
-        3, // y axis - green
-        4,
-        5 // z axis - blue
+            0,
+            1, // x axis - red
+            2,
+            3, // y axis - green
+            4,
+            5 // z axis - blue
     };
 
     VertexCount = 6;
@@ -342,7 +342,7 @@ void ovrGeometry::CreateAxes() {
 
 void ovrGeometry::CreateStage() {
     static const float stageVertices[12] = {
-        -1.0f, -1.0f, 0.0f, 1.0f, -1.0f, 0.0f, -1.0f, 1.0f, 0.0f, 1.0f, 1.0f, 0.0f};
+            -1.0f, -1.0f, 0.0f, 1.0f, -1.0f, 0.0f, -1.0f, 1.0f, 0.0f, 1.0f, 1.0f, 0.0f};
 
     static const unsigned short stageIndices[6] = {0, 1, 2, 2, 1, 3};
 
@@ -384,12 +384,12 @@ void ovrGeometry::CreateVAO() {
         if (VertexAttribs[i].Index != -1) {
             GL(glEnableVertexAttribArray(VertexAttribs[i].Index));
             GL(glVertexAttribPointer(
-                VertexAttribs[i].Index,
-                VertexAttribs[i].Size,
-                VertexAttribs[i].Type,
-                VertexAttribs[i].Normalized,
-                VertexAttribs[i].Stride,
-                VertexAttribs[i].Pointer));
+                    VertexAttribs[i].Index,
+                    VertexAttribs[i].Size,
+                    VertexAttribs[i].Type,
+                    VertexAttribs[i].Normalized,
+                    VertexAttribs[i].Stride,
+                    VertexAttribs[i].Pointer));
         }
     }
 
@@ -431,11 +431,11 @@ struct ovrUniform {
 };
 
 static ovrUniform ProgramUniforms[] = {
-    {ovrUniform::Index::MODEL_MATRIX, ovrUniform::Type::MATRIX4X4, "ModelMatrix"},
-    {ovrUniform::Index::VIEW_ID, ovrUniform::Type::INTEGER, "ViewID"},
-    {ovrUniform::Index::SCENE_MATRICES, ovrUniform::Type::BUFFER, "SceneMatrices"},
-    {ovrUniform::Index::COLOR_SCALE, ovrUniform::Type::VECTOR4, "ColorScale"},
-    {ovrUniform::Index::COLOR_BIAS, ovrUniform::Type::VECTOR4, "ColorBias"},
+        {ovrUniform::Index::MODEL_MATRIX, ovrUniform::Type::MATRIX4X4, "ModelMatrix"},
+        {ovrUniform::Index::VIEW_ID, ovrUniform::Type::INTEGER, "ViewID"},
+        {ovrUniform::Index::SCENE_MATRICES, ovrUniform::Type::BUFFER, "SceneMatrices"},
+        {ovrUniform::Index::COLOR_SCALE, ovrUniform::Type::VECTOR4, "ColorScale"},
+        {ovrUniform::Index::COLOR_BIAS, ovrUniform::Type::VECTOR4, "ColorBias"},
 };
 
 void ovrProgram::Clear() {
@@ -487,7 +487,7 @@ bool ovrProgram::Create(const char* vertexSource, const char* fragmentSource) {
     for (size_t i = 0; i < sizeof(ProgramVertexAttributes) / sizeof(ProgramVertexAttributes[0]);
          i++) {
         GL(glBindAttribLocation(
-            Program, ProgramVertexAttributes[i].location, ProgramVertexAttributes[i].name));
+                Program, ProgramVertexAttributes[i].location, ProgramVertexAttributes[i].name));
     }
 
     GL(glLinkProgram(Program));
@@ -506,13 +506,13 @@ bool ovrProgram::Create(const char* vertexSource, const char* fragmentSource) {
         const int uniformIndex = ProgramUniforms[i].index;
         if (ProgramUniforms[i].type == ovrUniform::Type::BUFFER) {
             GL(UniformLocation[uniformIndex] =
-                   glGetUniformBlockIndex(Program, ProgramUniforms[i].name));
+                       glGetUniformBlockIndex(Program, ProgramUniforms[i].name));
             UniformBinding[uniformIndex] = numBufferBindings++;
             GL(glUniformBlockBinding(
-                Program, UniformLocation[uniformIndex], UniformBinding[uniformIndex]));
+                    Program, UniformLocation[uniformIndex], UniformBinding[uniformIndex]));
         } else {
             GL(UniformLocation[uniformIndex] =
-                   glGetUniformLocation(Program, ProgramUniforms[i].name));
+                       glGetUniformLocation(Program, ProgramUniforms[i].name));
             UniformBinding[uniformIndex] = UniformLocation[uniformIndex];
         }
     }
@@ -550,86 +550,86 @@ void ovrProgram::Destroy() {
 }
 
 static const char CUBE_VERTEX_SHADER[] =
-    "#define NUM_VIEWS 2\n"
-    "#define VIEW_ID gl_ViewID_OVR\n"
-    "#extension GL_OVR_multiview2 : require\n"
-    "layout(num_views=NUM_VIEWS) in;\n"
-    "in vec3 vertexPosition;\n"
-    "in vec4 vertexColor;\n"
-    "uniform mat4 ModelMatrix;\n"
-    "uniform vec4 ColorScale;\n"
-    "uniform vec4 ColorBias;\n"
-    "uniform SceneMatrices\n"
-    "{\n"
-    "	uniform mat4 ViewMatrix[NUM_VIEWS];\n"
-    "	uniform mat4 ProjectionMatrix[NUM_VIEWS];\n"
-    "} sm;\n"
-    "out vec4 fragmentColor;\n"
-    "void main()\n"
-    "{\n"
-    "	gl_Position = sm.ProjectionMatrix[VIEW_ID] * ( sm.ViewMatrix[VIEW_ID] * ( ModelMatrix * vec4( vertexPosition, 1.0 ) ) );\n"
-    "	fragmentColor = vertexColor * ColorScale + ColorBias;\n"
-    "}\n";
+        "#define NUM_VIEWS 2\n"
+        "#define VIEW_ID gl_ViewID_OVR\n"
+        "#extension GL_OVR_multiview2 : require\n"
+        "layout(num_views=NUM_VIEWS) in;\n"
+        "in vec3 vertexPosition;\n"
+        "in vec4 vertexColor;\n"
+        "uniform mat4 ModelMatrix;\n"
+        "uniform vec4 ColorScale;\n"
+        "uniform vec4 ColorBias;\n"
+        "uniform SceneMatrices\n"
+        "{\n"
+        "	uniform mat4 ViewMatrix[NUM_VIEWS];\n"
+        "	uniform mat4 ProjectionMatrix[NUM_VIEWS];\n"
+        "} sm;\n"
+        "out vec4 fragmentColor;\n"
+        "void main()\n"
+        "{\n"
+        "	gl_Position = sm.ProjectionMatrix[VIEW_ID] * ( sm.ViewMatrix[VIEW_ID] * ( ModelMatrix * vec4( vertexPosition, 1.0 ) ) );\n"
+        "	fragmentColor = vertexColor * ColorScale + ColorBias;\n"
+        "}\n";
 
 static const char CUBE_FRAGMENT_SHADER[] =
-    "in lowp vec4 fragmentColor;\n"
-    "out lowp vec4 outColor;\n"
-    "void main()\n"
-    "{\n"
-    "	outColor = fragmentColor;\n"
-    "}\n";
+        "in lowp vec4 fragmentColor;\n"
+        "out lowp vec4 outColor;\n"
+        "void main()\n"
+        "{\n"
+        "	outColor = fragmentColor;\n"
+        "}\n";
 
 static const char STAGE_VERTEX_SHADER[] =
-    "#define NUM_VIEWS 2\n"
-    "#define VIEW_ID gl_ViewID_OVR\n"
-    "#extension GL_OVR_multiview2 : require\n"
-    "layout(num_views=NUM_VIEWS) in;\n"
-    "in vec3 vertexPosition;\n"
-    "uniform mat4 ModelMatrix;\n"
-    "uniform SceneMatrices\n"
-    "{\n"
-    "	uniform mat4 ViewMatrix[NUM_VIEWS];\n"
-    "	uniform mat4 ProjectionMatrix[NUM_VIEWS];\n"
-    "} sm;\n"
-    "void main()\n"
-    "{\n"
-    "	gl_Position = sm.ProjectionMatrix[VIEW_ID] * ( sm.ViewMatrix[VIEW_ID] * ( ModelMatrix * ( vec4( vertexPosition, 1.0 ) ) ) );\n"
-    "}\n";
+        "#define NUM_VIEWS 2\n"
+        "#define VIEW_ID gl_ViewID_OVR\n"
+        "#extension GL_OVR_multiview2 : require\n"
+        "layout(num_views=NUM_VIEWS) in;\n"
+        "in vec3 vertexPosition;\n"
+        "uniform mat4 ModelMatrix;\n"
+        "uniform SceneMatrices\n"
+        "{\n"
+        "	uniform mat4 ViewMatrix[NUM_VIEWS];\n"
+        "	uniform mat4 ProjectionMatrix[NUM_VIEWS];\n"
+        "} sm;\n"
+        "void main()\n"
+        "{\n"
+        "	gl_Position = sm.ProjectionMatrix[VIEW_ID] * ( sm.ViewMatrix[VIEW_ID] * ( ModelMatrix * ( vec4( vertexPosition, 1.0 ) ) ) );\n"
+        "}\n";
 
 static const char STAGE_FRAGMENT_SHADER[] =
-    "out lowp vec4 outColor;\n"
-    "void main()\n"
-    "{\n"
-    "	outColor = vec4( 0.5, 0.5, 1.0, 0.5 );\n"
-    "}\n";
+        "out lowp vec4 outColor;\n"
+        "void main()\n"
+        "{\n"
+        "	outColor = vec4( 0.5, 0.5, 1.0, 0.5 );\n"
+        "}\n";
 
 static const char AXES_VERTEX_SHADER[] =
-    "#define NUM_VIEWS 2\n"
-    "#define VIEW_ID gl_ViewID_OVR\n"
-    "#extension GL_OVR_multiview2 : require\n"
-    "layout(num_views=NUM_VIEWS) in;\n"
-    "in vec3 vertexPosition;\n"
-    "in vec4 vertexColor;\n"
-    "uniform mat4 ModelMatrix;\n"
-    "uniform SceneMatrices\n"
-    "{\n"
-    "	uniform mat4 ViewMatrix[NUM_VIEWS];\n"
-    "	uniform mat4 ProjectionMatrix[NUM_VIEWS];\n"
-    "} sm;\n"
-    "out vec4 fragmentColor;\n"
-    "void main()\n"
-    "{\n"
-    "	gl_Position = sm.ProjectionMatrix[VIEW_ID] * ( sm.ViewMatrix[VIEW_ID] * ( ModelMatrix * ( vec4( vertexPosition, 1.0 ) ) ) );\n"
-    "	fragmentColor = vertexColor;\n"
-    "}\n";
+        "#define NUM_VIEWS 2\n"
+        "#define VIEW_ID gl_ViewID_OVR\n"
+        "#extension GL_OVR_multiview2 : require\n"
+        "layout(num_views=NUM_VIEWS) in;\n"
+        "in vec3 vertexPosition;\n"
+        "in vec4 vertexColor;\n"
+        "uniform mat4 ModelMatrix;\n"
+        "uniform SceneMatrices\n"
+        "{\n"
+        "	uniform mat4 ViewMatrix[NUM_VIEWS];\n"
+        "	uniform mat4 ProjectionMatrix[NUM_VIEWS];\n"
+        "} sm;\n"
+        "out vec4 fragmentColor;\n"
+        "void main()\n"
+        "{\n"
+        "	gl_Position = sm.ProjectionMatrix[VIEW_ID] * ( sm.ViewMatrix[VIEW_ID] * ( ModelMatrix * ( vec4( vertexPosition, 1.0 ) ) ) );\n"
+        "	fragmentColor = vertexColor;\n"
+        "}\n";
 
 static const char AXES_FRAGMENT_SHADER[] =
-    "in lowp vec4 fragmentColor;\n"
-    "out lowp vec4 outColor;\n"
-    "void main()\n"
-    "{\n"
-    "	outColor = fragmentColor;\n"
-    "}\n";
+        "in lowp vec4 fragmentColor;\n"
+        "out lowp vec4 outColor;\n"
+        "void main()\n"
+        "{\n"
+        "	outColor = fragmentColor;\n"
+        "}\n";
 
 /*
 ================================================================================
@@ -652,18 +652,18 @@ static void* GlGetExtensionProc(const char* functionName) {
 }
 
 bool ovrFramebuffer::Create(
-    const GLenum colorFormat,
-    const int width,
-    const int height,
-    const int multisamples,
-    const int swapChainLength,
-    GLuint* colorTextures) {
-    PFNGLFRAMEBUFFERTEXTUREMULTIVIEWOVRPROC glFramebufferTextureMultiviewOVR =
-        (PFNGLFRAMEBUFFERTEXTUREMULTIVIEWOVRPROC)GlGetExtensionProc(
-            "glFramebufferTextureMultiviewOVR");
-    PFNGLFRAMEBUFFERTEXTUREMULTISAMPLEMULTIVIEWOVRPROC glFramebufferTextureMultisampleMultiviewOVR =
-        (PFNGLFRAMEBUFFERTEXTUREMULTISAMPLEMULTIVIEWOVRPROC)GlGetExtensionProc(
-            "glFramebufferTextureMultisampleMultiviewOVR");
+        const GLenum colorFormat,
+        const int width,
+        const int height,
+        const int multisamples,
+        const int swapChainLength,
+        GLuint* colorTextures) {
+    auto glFramebufferTextureMultiviewOVR =
+            (PFNGLFRAMEBUFFERTEXTUREMULTIVIEWOVRPROC)GlGetExtensionProc(
+                    "glFramebufferTextureMultiviewOVR");
+    auto glFramebufferTextureMultisampleMultiviewOVR =
+            (PFNGLFRAMEBUFFERTEXTUREMULTISAMPLEMULTIVIEWOVRPROC)GlGetExtensionProc(
+                    "glFramebufferTextureMultisampleMultiviewOVR");
 
     Width = width;
     Height = height;
@@ -697,44 +697,44 @@ bool ovrFramebuffer::Create(
         GL(glBindFramebuffer(GL_DRAW_FRAMEBUFFER, el.FrameBufferObject));
         if (multisamples > 1 && (glFramebufferTextureMultisampleMultiviewOVR != nullptr)) {
             GL(glFramebufferTextureMultisampleMultiviewOVR(
-                GL_DRAW_FRAMEBUFFER,
-                GL_DEPTH_ATTACHMENT,
-                el.DepthTexture,
-                0 /* level */,
-                multisamples /* samples */,
-                0 /* baseViewIndex */,
-                2 /* numViews */));
+                    GL_DRAW_FRAMEBUFFER,
+                    GL_DEPTH_ATTACHMENT,
+                    el.DepthTexture,
+                    0 /* level */,
+                    multisamples /* samples */,
+                    0 /* baseViewIndex */,
+                    2 /* numViews */));
             GL(glFramebufferTextureMultisampleMultiviewOVR(
-                GL_DRAW_FRAMEBUFFER,
-                GL_COLOR_ATTACHMENT0,
-                el.ColorTexture,
-                0 /* level */,
-                multisamples /* samples */,
-                0 /* baseViewIndex */,
-                2 /* numViews */));
+                    GL_DRAW_FRAMEBUFFER,
+                    GL_COLOR_ATTACHMENT0,
+                    el.ColorTexture,
+                    0 /* level */,
+                    multisamples /* samples */,
+                    0 /* baseViewIndex */,
+                    2 /* numViews */));
         } else if (glFramebufferTextureMultiviewOVR) {
             GL(glFramebufferTextureMultiviewOVR(
-                GL_DRAW_FRAMEBUFFER,
-                GL_DEPTH_ATTACHMENT,
-                el.DepthTexture,
-                0 /* level */,
-                0 /* baseViewIndex */,
-                2 /* numViews */));
+                    GL_DRAW_FRAMEBUFFER,
+                    GL_DEPTH_ATTACHMENT,
+                    el.DepthTexture,
+                    0 /* level */,
+                    0 /* baseViewIndex */,
+                    2 /* numViews */));
             GL(glFramebufferTextureMultiviewOVR(
-                GL_DRAW_FRAMEBUFFER,
-                GL_COLOR_ATTACHMENT0,
-                el.ColorTexture,
-                0 /* level */,
-                0 /* baseViewIndex */,
-                2 /* numViews */));
+                    GL_DRAW_FRAMEBUFFER,
+                    GL_COLOR_ATTACHMENT0,
+                    el.ColorTexture,
+                    0 /* level */,
+                    0 /* baseViewIndex */,
+                    2 /* numViews */));
         }
 
         GL(GLenum renderFramebufferStatus = glCheckFramebufferStatus(GL_DRAW_FRAMEBUFFER));
         GL(glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0));
         if (renderFramebufferStatus != GL_FRAMEBUFFER_COMPLETE) {
             ALOGE(
-                "Incomplete frame buffer object: %s",
-                GlFrameBufferStatusString(renderFramebufferStatus));
+                    "Incomplete frame buffer object: %s",
+                    GlFrameBufferStatusString(renderFramebufferStatus));
             return false;
         }
     }
@@ -825,18 +825,22 @@ void ovrScene::DestroyVAOs() {
 
 void ovrScene::Create() {
     // Cube
-    CubeProgram.Create(CUBE_VERTEX_SHADER, CUBE_FRAGMENT_SHADER);
+    ALOGV("ovrScene::Create");
+    if (!CubeProgram.Create(CUBE_VERTEX_SHADER, CUBE_FRAGMENT_SHADER)) {
+        ALOGE("Failed to compile cube program");
+    }
     Cube.CreateCube();
+    ALOGV("ovrScene::Create Cube crated");
 
     // Setup the scene matrices.
     GL(glGenBuffers(1, &SceneMatrices));
     GL(glBindBuffer(GL_UNIFORM_BUFFER, SceneMatrices));
     GL(glBufferData(
-        GL_UNIFORM_BUFFER,
-        2 * sizeof(Matrix4f) /* 2 view matrices */ +
+            GL_UNIFORM_BUFFER,
+            2 * sizeof(Matrix4f) /* 2 view matrices */ +
             2 * sizeof(Matrix4f) /* 2 projection matrices */,
-        nullptr,
-        GL_STATIC_DRAW));
+            nullptr,
+            GL_STATIC_DRAW));
     GL(glBindBuffer(GL_UNIFORM_BUFFER, 0));
 
     // Stage
@@ -885,12 +889,12 @@ void ovrAppRenderer::Clear() {
 }
 
 void ovrAppRenderer::Create(
-    GLenum format,
-    int width,
-    int height,
-    int numMultiSamples,
-    int swapChainLength,
-    GLuint* colorTextures) {
+        GLenum format,
+        int width,
+        int height,
+        int numMultiSamples,
+        int swapChainLength,
+        GLuint* colorTextures) {
     EglInitExtensions();
     Framebuffer.Create(format, width, height, numMultiSamples, swapChainLength, colorTextures);
     if (glExtensions.EXT_sRGB_write_control) {
@@ -910,11 +914,11 @@ void ovrAppRenderer::Destroy() {
 void ovrAppRenderer::RenderFrame(ovrAppRenderer::FrameIn frameIn) {
     // Update the scene matrices.
     GL(glBindBuffer(GL_UNIFORM_BUFFER, Scene.SceneMatrices));
-    GL(Matrix4f* sceneMatrices = (Matrix4f*)glMapBufferRange(
-           GL_UNIFORM_BUFFER,
-           0,
-           4 * sizeof(Matrix4f) /* 2 view + 2 proj matrices */,
-           GL_MAP_WRITE_BIT | GL_MAP_INVALIDATE_BUFFER_BIT));
+    GL(auto* sceneMatrices = (Matrix4f*)glMapBufferRange(
+            GL_UNIFORM_BUFFER,
+            0,
+            4 * sizeof(Matrix4f) /* 2 view + 2 proj matrices */,
+               GL_MAP_WRITE_BIT | GL_MAP_INVALIDATE_BUFFER_BIT));
 
     if (sceneMatrices != nullptr) {
         memcpy((char*)sceneMatrices, &frameIn.View, 4 * sizeof(Matrix4f));
@@ -936,15 +940,15 @@ void ovrAppRenderer::RenderFrame(ovrAppRenderer::FrameIn frameIn) {
     GL(glViewport(0, 0, Framebuffer.Width, Framebuffer.Height));
     GL(glScissor(0, 0, Framebuffer.Width, Framebuffer.Height));
     GL(glClearColor(
-        Scene.ClearColor[0], Scene.ClearColor[1], Scene.ClearColor[2], Scene.ClearColor[3]));
+            Scene.ClearColor[0], Scene.ClearColor[1], Scene.ClearColor[2], Scene.ClearColor[3]));
     GL(glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT));
 
     // Cubes
     GL(glUseProgram(Scene.CubeProgram.Program));
     GL(glBindBufferBase(
-        GL_UNIFORM_BUFFER,
-        Scene.CubeProgram.UniformBinding[ovrUniform::Index::SCENE_MATRICES],
-        Scene.SceneMatrices));
+            GL_UNIFORM_BUFFER,
+            Scene.CubeProgram.UniformBinding[ovrUniform::Index::SCENE_MATRICES],
+            Scene.SceneMatrices));
     if (Scene.CubeProgram.UniformLocation[ovrUniform::Index::VIEW_ID] >=
         0) // NOTE: will not be present when multiview path is enabled.
     {
@@ -974,9 +978,9 @@ void ovrAppRenderer::RenderFrame(ovrAppRenderer::FrameIn frameIn) {
     // "tracking space" axes (could be LOCAL or LOCAL_FLOOR)
     GL(glUseProgram(Scene.AxesProgram.Program));
     GL(glBindBufferBase(
-        GL_UNIFORM_BUFFER,
-        Scene.AxesProgram.UniformBinding[ovrUniform::Index::SCENE_MATRICES],
-        Scene.SceneMatrices));
+            GL_UNIFORM_BUFFER,
+            Scene.AxesProgram.UniformBinding[ovrUniform::Index::SCENE_MATRICES],
+            Scene.SceneMatrices));
     if (Scene.AxesProgram.UniformLocation[ovrUniform::Index::VIEW_ID] >=
         0) // NOTE: will not be present when multiview path is enabled.
     {
@@ -985,10 +989,10 @@ void ovrAppRenderer::RenderFrame(ovrAppRenderer::FrameIn frameIn) {
     if (Scene.AxesProgram.UniformLocation[ovrUniform::Index::MODEL_MATRIX] >= 0) {
         const Matrix4f scale = Matrix4f::Scaling(0.1, 0.1, 0.1);
         GL(glUniformMatrix4fv(
-            Scene.AxesProgram.UniformLocation[ovrUniform::Index::MODEL_MATRIX],
-            1,
-            GL_TRUE,
-            &scale.M[0][0]));
+                Scene.AxesProgram.UniformLocation[ovrUniform::Index::MODEL_MATRIX],
+                1,
+                GL_TRUE,
+                &scale.M[0][0]));
     }
     GL(glBindVertexArray(Scene.Axes.VertexArrayObject));
     GL(glDrawElements(GL_LINES, Scene.Axes.IndexCount, GL_UNSIGNED_SHORT, nullptr));
@@ -999,9 +1003,9 @@ void ovrAppRenderer::RenderFrame(ovrAppRenderer::FrameIn frameIn) {
         // stage axes
         GL(glUseProgram(Scene.AxesProgram.Program));
         GL(glBindBufferBase(
-            GL_UNIFORM_BUFFER,
-            Scene.AxesProgram.UniformBinding[ovrUniform::Index::SCENE_MATRICES],
-            Scene.SceneMatrices));
+                GL_UNIFORM_BUFFER,
+                Scene.AxesProgram.UniformBinding[ovrUniform::Index::SCENE_MATRICES],
+                Scene.SceneMatrices));
         if (Scene.AxesProgram.UniformLocation[ovrUniform::Index::VIEW_ID] >=
             0) // NOTE: will not be present when multiview path is enabled.
         {
@@ -1012,10 +1016,10 @@ void ovrAppRenderer::RenderFrame(ovrAppRenderer::FrameIn frameIn) {
             const Matrix4f stagePoseMat = Matrix4f(frameIn.StagePose);
             const Matrix4f m1 = stagePoseMat * scale;
             GL(glUniformMatrix4fv(
-                Scene.AxesProgram.UniformLocation[ovrUniform::Index::MODEL_MATRIX],
-                1,
-                GL_TRUE,
-                &m1.M[0][0]));
+                    Scene.AxesProgram.UniformLocation[ovrUniform::Index::MODEL_MATRIX],
+                    1,
+                    GL_TRUE,
+                    &m1.M[0][0]));
         }
         GL(glBindVertexArray(Scene.Axes.VertexArrayObject));
         GL(glDrawElements(GL_LINES, Scene.Axes.IndexCount, GL_UNSIGNED_SHORT, nullptr));
@@ -1027,9 +1031,9 @@ void ovrAppRenderer::RenderFrame(ovrAppRenderer::FrameIn frameIn) {
         // Stage
         GL(glUseProgram(Scene.StageProgram.Program));
         GL(glBindBufferBase(
-            GL_UNIFORM_BUFFER,
-            Scene.StageProgram.UniformBinding[ovrUniform::Index::SCENE_MATRICES],
-            Scene.SceneMatrices));
+                GL_UNIFORM_BUFFER,
+                Scene.StageProgram.UniformBinding[ovrUniform::Index::SCENE_MATRICES],
+                Scene.SceneMatrices));
         if (Scene.StageProgram.UniformLocation[ovrUniform::Index::VIEW_ID] >=
             0) // NOTE: will not be present when multiview path is enabled.
         {
@@ -1041,10 +1045,10 @@ void ovrAppRenderer::RenderFrame(ovrAppRenderer::FrameIn frameIn) {
             const Matrix4f stagePoseMat = Matrix4f(frameIn.StagePose);
             const Matrix4f m2 = stagePoseMat * stageScaleMat * rotateVtoH;
             GL(glUniformMatrix4fv(
-                Scene.StageProgram.UniformLocation[ovrUniform::Index::MODEL_MATRIX],
-                1,
-                GL_TRUE,
-                &m2.M[0][0]));
+                    Scene.StageProgram.UniformLocation[ovrUniform::Index::MODEL_MATRIX],
+                    1,
+                    GL_TRUE,
+                    &m2.M[0][0]));
         }
         GL(glDepthMask(GL_FALSE));
         GL(glEnable(GL_DEPTH_TEST));

@@ -31,7 +31,7 @@
   <uses-permission android:name="com.oculus.permission.USE_ANCHOR_API" />
     <application
       android:allowBackup="false"
-      android:label="OculusECG"
+      android:label="OculusSpatialAnchor"
       >
     <meta-data
         android:name="com.samsung.android.vr.application.mode"
