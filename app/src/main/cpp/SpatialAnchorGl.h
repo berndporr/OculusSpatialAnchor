@@ -16,7 +16,6 @@
 #endif
 
 #include <openxr/openxr.h>
-#include <openxr/openxr_oculus.h>
 #include <openxr/openxr_oculus_helpers.h>
 #include <openxr/openxr_platform.h>
 
