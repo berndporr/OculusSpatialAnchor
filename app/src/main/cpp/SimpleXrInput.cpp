@@ -1,17 +1,31 @@
 // Simple Xr Input
 
+#if defined(ANDROID)
 #include <android/log.h>
+#endif
 
 #include <inttypes.h>
 #include <vector>
 
 #include "SimpleXrInput.h"
 
+#if defined(ANDROID)
 #define DEBUG 1
 #define OVR_LOG_TAG "SimpleXrInput"
 
 #define ALOGE(...) __android_log_print(ANDROID_LOG_ERROR, OVR_LOG_TAG, __VA_ARGS__)
 #define ALOGV(...) __android_log_print(ANDROID_LOG_VERBOSE, OVR_LOG_TAG, __VA_ARGS__)
+#else
+#define DEBUG 1
+#define ALOGE(...)       \
+    printf("ERROR: ");   \
+    printf(__VA_ARGS__); \
+    printf("\n")
+#define ALOGV(...)       \
+    printf("VERBOSE: "); \
+    printf(__VA_ARGS__); \
+    printf("\n")
+#endif
 
 /*
 ================================================================================

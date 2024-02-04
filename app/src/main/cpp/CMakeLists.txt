@@ -10,7 +10,7 @@ cmake_minimum_required(VERSION 3.18.1)
 project("oculusspatialanchor")
 
 # set it to the oculus API
-set(OCULUS_OPENXR_MOBILE_SDK /home/bp1/sandbox/ovr_openxr_mobile_sdk)
+set(OCULUS_OPENXR_MOBILE_SDK d:/Development/Library/ovr_openxr_mobile_sdk_60.0)
 
 set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -u ANativeActivity_onCreate")
 
@@ -25,6 +25,7 @@ set_property(
 
 include_directories(
         ${OCULUS_OPENXR_MOBILE_SDK}/3rdParty/khronos/openxr/OpenXR-SDK/include
+        ${OCULUS_OPENXR_MOBILE_SDK}/3rdParty/khronos/openxr/OpenXR-SDK/src/common
         ${OCULUS_OPENXR_MOBILE_SDK}/1stParty/OVR/Include/
         ${OCULUS_OPENXR_MOBILE_SDK}/OpenXR/Include
         ${ANDROID_NDK}/sources/android/native_app_glue/
@@ -42,6 +43,8 @@ add_library( # Sets the name of the library.
         SHARED
 
         SpatialAnchorGl.cpp
+        SpatialAnchorFileHandler.cpp
+        SpatialAnchorUtilities.cpp
         SimpleXrInput.cpp
         SpatialAnchorXr.cpp)
 

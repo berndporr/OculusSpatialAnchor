@@ -5,37 +5,57 @@ Content   : This sample uses the Android NativeActivity class.
 Created   :
 Authors   :
 
-Copyright : Copyright (c) Facebook Technologies, LLC and its affiliates. All rights reserved.
+Copyright : Copyright (c) Meta Platforms, Inc. and its affiliates. All rights reserved.
 
 *************************************************************************************/
 
 #include <openxr/openxr.h>
+#include <memory>
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdbool.h>
 #include <string.h> // for memset
-#include <map>
+#include <unordered_map>
+#include <utility>
 #include <math.h>
 #include <string>
 #include <time.h>
 
+#if defined(ANDROID)
 #include <unistd.h>
 #include <pthread.h>
 #include <sys/prctl.h> // for prctl( PR_SET_NAME )
 #include <android/log.h>
 #include <android/native_window_jni.h> // for native window JNI
 #include <android_native_app_glue.h>
+#else
+#include <thread>
+#endif
 
 #include <assert.h>
 
 #include "SpatialAnchorXr.h"
 #include "SpatialAnchorGl.h"
 #include "SimpleXrInput.h"
+#include "SpatialAnchorUtilities.h"
+#include "SpatialAnchorFileHandler.h"
 
 #include <openxr/fb_spatial_entity.h>
 #include <openxr/fb_spatial_entity_query.h>
 #include <openxr/fb_spatial_entity_storage.h>
+#include <openxr/fb_spatial_entity_storage_batch.h>
+#include <openxr/fb_spatial_entity_user.h>
+#include <openxr/fb_spatial_entity_sharing.h>
 
+#if defined(_WIN32)
+// Favor the high performance NVIDIA or AMD GPUs
+extern "C" {
+// http://developer.download.nvidia.com/devzone/devcenter/gamegraphics/files/OptimusRenderingPolicies.pdf
+__declspec(dllexport) DWORD NvOptimusEnablement = 0x00000001;
+// https://gpuopen.com/learn/amdpowerxpressrequesthighperformance/
+__declspec(dllexport) DWORD AmdPowerXpressRequestHighPerformance = 0x00000001;
+}
+#endif // defined(_WIN32)
 
 using namespace OVR;
 
@@ -43,11 +63,28 @@ using namespace OVR;
 #define EGL_OPENGL_ES3_BIT_KHR 0x0040
 #endif
 
+#if defined(ANDROID)
 #define DEBUG 1
 #define OVR_LOG_TAG "SpatialAnchorXr"
 
 #define ALOGE(...) __android_log_print(ANDROID_LOG_ERROR, OVR_LOG_TAG, __VA_ARGS__)
+#define ALOGW(...) __android_log_print(ANDROID_LOG_WARN, OVR_LOG_TAG, __VA_ARGS__)
 #define ALOGV(...) __android_log_print(ANDROID_LOG_VERBOSE, OVR_LOG_TAG, __VA_ARGS__)
+#else
+#include <cinttypes>
+#define ALOGE(...)       \
+    printf("ERROR: ");   \
+    printf(__VA_ARGS__); \
+    printf("\n")
+#define ALOGW(...)       \
+    printf("WARN: ");    \
+    printf(__VA_ARGS__); \
+    printf("\n")
+#define ALOGV(...)       \
+    printf("VERBOSE: "); \
+    printf(__VA_ARGS__); \
+    printf("\n")
+#endif
 
 static const int CPU_LEVEL = 2;
 static const int GPU_LEVEL = 3;
@@ -68,30 +105,6 @@ enum { ovrMaxLayerCount = 16 };
 
 // Forward declarations
 XrInstance instance;
-
-/*
-================================================================================
-
-Hex and Binary Conversion Functions
-
-================================================================================
-*/
-
-std::string bin2hex(const uint8_t* src, uint32_t size) {
-    std::string res;
-    res.reserve(size * 2);
-    const char hex[] = "0123456789ABCDEF";
-    for (uint32_t i = 0; i < size; ++i) {
-        uint8_t c = src[i];
-        res += hex[c >> 4];
-        res += hex[c & 0xf];
-    }
-    return res;
-}
-
-std::string uuidToHexString(const XrUuidEXT& uuid) {
-    return bin2hex(reinterpret_cast<const uint8_t*>(uuid.data), XR_UUID_SIZE_EXT);
-}
 
 /*
 ================================================================================
@@ -234,6 +247,7 @@ struct ovrEgl {
     void Clear();
     void CreateContext(const ovrEgl* shareEgl);
     void DestroyContext();
+#if defined(XR_USE_GRAPHICS_API_OPENGL_ES)
     EGLint MajorVersion;
     EGLint MinorVersion;
     EGLDisplay Display;
@@ -241,9 +255,14 @@ struct ovrEgl {
     EGLSurface TinySurface;
     EGLSurface MainSurface;
     EGLContext Context;
+#elif defined(XR_USE_GRAPHICS_API_OPENGL)
+    HDC hDC;
+    HGLRC hGLRC;
+#endif //
 };
 
 void ovrEgl::Clear() {
+#if defined(XR_USE_GRAPHICS_API_OPENGL_ES)
     MajorVersion = 0;
     MinorVersion = 0;
     Display = 0;
@@ -251,8 +270,13 @@ void ovrEgl::Clear() {
     TinySurface = EGL_NO_SURFACE;
     MainSurface = EGL_NO_SURFACE;
     Context = EGL_NO_CONTEXT;
+#elif defined(XR_USE_GRAPHICS_API_OPENGL)
+    hDC = 0;
+    hGLRC = 0;
+#endif
 }
 
+#if defined(XR_USE_GRAPHICS_API_OPENGL_ES)
 void ovrEgl::CreateContext(const ovrEgl* shareEgl) {
     if (Display != 0) {
         return;
@@ -272,21 +296,21 @@ void ovrEgl::CreateContext(const ovrEgl* shareEgl) {
         return;
     }
     const EGLint configAttribs[] = {
-            EGL_RED_SIZE,
-            8,
-            EGL_GREEN_SIZE,
-            8,
-            EGL_BLUE_SIZE,
-            8,
-            EGL_ALPHA_SIZE,
-            8, // need alpha for the multi-pass timewarp compositor
-            EGL_DEPTH_SIZE,
-            0,
-            EGL_STENCIL_SIZE,
-            0,
-            EGL_SAMPLES,
-            0,
-            EGL_NONE};
+        EGL_RED_SIZE,
+        8,
+        EGL_GREEN_SIZE,
+        8,
+        EGL_BLUE_SIZE,
+        8,
+        EGL_ALPHA_SIZE,
+        8, // need alpha for the multi-pass timewarp compositor
+        EGL_DEPTH_SIZE,
+        0,
+        EGL_STENCIL_SIZE,
+        0,
+        EGL_SAMPLES,
+        0,
+        EGL_NONE};
     Config = 0;
     for (int i = 0; i < numConfigs; i++) {
         EGLint value = 0;
@@ -322,10 +346,10 @@ void ovrEgl::CreateContext(const ovrEgl* shareEgl) {
     EGLint contextAttribs[] = {EGL_CONTEXT_CLIENT_VERSION, 3, EGL_NONE};
     ALOGV("        Context = eglCreateContext( Display, Config, EGL_NO_CONTEXT, contextAttribs )");
     Context = eglCreateContext(
-            Display,
-            Config,
-            (shareEgl != nullptr) ? shareEgl->Context : EGL_NO_CONTEXT,
-            contextAttribs);
+        Display,
+        Config,
+        (shareEgl != nullptr) ? shareEgl->Context : EGL_NO_CONTEXT,
+        contextAttribs);
     if (Context == EGL_NO_CONTEXT) {
         ALOGE("        eglCreateContext() failed: %s", EglErrorString(eglGetError()));
         return;
@@ -379,6 +403,18 @@ void ovrEgl::DestroyContext() {
     }
 }
 
+#elif defined(XR_USE_GRAPHICS_API_OPENGL)
+
+void ovrEgl::CreateContext(const ovrEgl*) {
+    ovrGl_CreateContext_Windows(&hDC, &hGLRC);
+}
+
+void ovrEgl::DestroyContext() {
+    ovrGl_DestroyContext_Windows();
+}
+
+#endif
+
 /*
 ================================================================================
 
@@ -405,6 +441,12 @@ struct ovrExtensionFunctionPointers {
     PFN_xrRetrieveSpaceQueryResultsFB xrRetrieveSpaceQueryResultsFB = nullptr;
     PFN_xrSaveSpaceFB xrSaveSpaceFB = nullptr;
     PFN_xrEraseSpaceFB xrEraseSpaceFB = nullptr;
+    PFN_xrGetSpaceUuidFB xrGetSpaceUuidFB = nullptr;
+    PFN_xrCreateSpaceUserFB xrCreateSpaceUserFB = nullptr;
+    PFN_xrGetSpaceUserIdFB xrGetSpaceUserIdFB = nullptr;
+    PFN_xrDestroySpaceUserFB xrDestroySpaceUserFB = nullptr;
+    PFN_xrSaveSpaceListFB xrSaveSpaceListFB = nullptr;
+    PFN_xrShareSpacesFB xrShareSpacesFB = nullptr;
 };
 
 struct ovrEnableComponentEvent {
@@ -419,8 +461,9 @@ struct ovrApp {
     bool IsComponentSupported(XrSpace space, XrSpaceComponentTypeFB type);
 
     ovrEgl Egl;
-    ANativeWindow* NativeWindow;
+#if defined(XR_USE_PLATFORM_ANDROID)
     bool Resumed;
+#endif // defined(XR_USE_PLATFORM_ANDROID)
     bool ShouldExit;
     bool Focused;
 
@@ -432,6 +475,8 @@ struct ovrApp {
     XrSpace LocalSpace;
     XrSpace StageSpace;
     bool SessionActive;
+
+    bool IsLocalMultiplayerSupported;
 
     ovrExtensionFunctionPointers FunPtrs;
     ovrScene Scene;
@@ -448,7 +493,21 @@ struct ovrApp {
     bool TouchPadDownLastFrame;
 
     bool ShouldQueryAnchors;
+    bool ShouldShareAnchors;
 
+    std::unique_ptr<SpatialAnchorExternalDataHandler> ExternalDataHandler =
+        std::make_unique<SpatialAnchorFileHandler>();
+
+    // List of users to share Spatial Anchors with, if populated.
+    std::vector<XrSpaceUserIdFB> ShareUserList;
+    // List of inbound Shared Spatial Anchors, which could be empty.
+    std::vector<XrUuidEXT> InboundSpatialAnchorList;
+
+    std::unordered_map<XrAsyncRequestIdFB, std::vector<XrSpace>> SaveSpaceListCloudEventMap;
+    std::unordered_map<
+        XrAsyncRequestIdFB,
+        std::pair<std::vector<XrSpace>, std::vector<XrSpaceUserFB>>>
+        ShareSpacesEventMap;
 
     XrSwapchain ColorSwapChain;
     uint32_t SwapChainLength;
@@ -456,12 +515,13 @@ struct ovrApp {
     // Provided by SpatialAnchorGl, which is not aware of VrApi or OpenXR
     ovrAppRenderer AppRenderer;
 
-    std::map<XrAsyncRequestIdFB, XrSpace> DestroySpaceEventMap;
+    std::unordered_map<XrAsyncRequestIdFB, XrSpace> DestroySpaceEventMap;
 };
 
 void ovrApp::Clear() {
-    NativeWindow = NULL;
+#if defined(XR_USE_PLATFORM_ANDROID)
     Resumed = false;
+#endif // defined(XR_USE_PLATFORM_ANDROID)
     ShouldExit = false;
     Focused = false;
     instance = XR_NULL_HANDLE;
@@ -493,13 +553,12 @@ void ovrApp::Clear() {
 
 void ovrApp::HandleSessionStateChanges(XrSessionState state) {
     if (state == XR_SESSION_STATE_READY) {
+#if defined(XR_USE_PLATFORM_ANDROID)
         assert(Resumed);
-        assert(NativeWindow != NULL);
+#endif // defined(XR_USE_PLATFORM_ANDROID)
         assert(SessionActive == false);
 
-        XrSessionBeginInfo sessionBeginInfo = {};
-        sessionBeginInfo.type = XR_TYPE_SESSION_BEGIN_INFO;
-        sessionBeginInfo.next = nullptr;
+        XrSessionBeginInfo sessionBeginInfo = {XR_TYPE_SESSION_BEGIN_INFO};
         sessionBeginInfo.primaryViewConfigurationType = ViewportConfig.viewConfigurationType;
 
         XrResult result;
@@ -507,6 +566,7 @@ void ovrApp::HandleSessionStateChanges(XrSessionState state) {
 
         SessionActive = (result == XR_SUCCESS);
 
+#if defined(XR_USE_PLATFORM_ANDROID)
         // Set session state once we have entered VR mode and have a valid session object.
         if (SessionActive) {
             XrPerfSettingsLevelEXT cpuPerfLevel = XR_PERF_SETTINGS_LEVEL_SUSTAINED_HIGH_EXT;
@@ -549,28 +609,31 @@ void ovrApp::HandleSessionStateChanges(XrSessionState state) {
 
             PFN_xrPerfSettingsSetPerformanceLevelEXT pfnPerfSettingsSetPerformanceLevelEXT = NULL;
             OXR(xrGetInstanceProcAddr(
-                    instance,
-                    "xrPerfSettingsSetPerformanceLevelEXT",
-                    (PFN_xrVoidFunction*)(&pfnPerfSettingsSetPerformanceLevelEXT)));
+                instance,
+                "xrPerfSettingsSetPerformanceLevelEXT",
+                (PFN_xrVoidFunction*)(&pfnPerfSettingsSetPerformanceLevelEXT)));
 
             OXR(pfnPerfSettingsSetPerformanceLevelEXT(
-                    Session, XR_PERF_SETTINGS_DOMAIN_CPU_EXT, cpuPerfLevel));
+                Session, XR_PERF_SETTINGS_DOMAIN_CPU_EXT, cpuPerfLevel));
             OXR(pfnPerfSettingsSetPerformanceLevelEXT(
-                    Session, XR_PERF_SETTINGS_DOMAIN_GPU_EXT, gpuPerfLevel));
+                Session, XR_PERF_SETTINGS_DOMAIN_GPU_EXT, gpuPerfLevel));
 
             PFN_xrSetAndroidApplicationThreadKHR pfnSetAndroidApplicationThreadKHR = NULL;
             OXR(xrGetInstanceProcAddr(
-                    instance,
-                    "xrSetAndroidApplicationThreadKHR",
-                    (PFN_xrVoidFunction*)(&pfnSetAndroidApplicationThreadKHR)));
+                instance,
+                "xrSetAndroidApplicationThreadKHR",
+                (PFN_xrVoidFunction*)(&pfnSetAndroidApplicationThreadKHR)));
 
             OXR(pfnSetAndroidApplicationThreadKHR(
-                    Session, XR_ANDROID_THREAD_TYPE_APPLICATION_MAIN_KHR, MainThreadTid));
+                Session, XR_ANDROID_THREAD_TYPE_APPLICATION_MAIN_KHR, MainThreadTid));
             OXR(pfnSetAndroidApplicationThreadKHR(
-                    Session, XR_ANDROID_THREAD_TYPE_RENDERER_MAIN_KHR, RenderThreadTid));
+                Session, XR_ANDROID_THREAD_TYPE_RENDERER_MAIN_KHR, RenderThreadTid));
         }
+#endif // defined(XR_USE_PLATFORM_ANDROID)
     } else if (state == XR_SESSION_STATE_STOPPING) {
+#if defined(XR_USE_PLATFORM_ANDROID)
         assert(Resumed == false);
+#endif // defined(XR_USE_PLATFORM_ANDROID)
         assert(SessionActive);
 
         OXR(xrEndSession(Session));
@@ -583,7 +646,7 @@ bool ovrApp::IsComponentSupported(XrSpace space, XrSpaceComponentTypeFB type) {
     OXR(FunPtrs.xrEnumerateSpaceSupportedComponentsFB(space, 0, &numComponents, nullptr));
     std::vector<XrSpaceComponentTypeFB> components(numComponents);
     OXR(FunPtrs.xrEnumerateSpaceSupportedComponentsFB(
-            space, numComponents, &numComponents, components.data()));
+        space, numComponents, &numComponents, components.data()));
 
     bool supported = false;
     for (uint32_t c = 0; c < numComponents; ++c) {
@@ -621,26 +684,26 @@ void ovrApp::HandleXrEvents() {
                 break;
             case XR_TYPE_EVENT_DATA_PERF_SETTINGS_EXT: {
                 const XrEventDataPerfSettingsEXT* perf_settings_event =
-                        (XrEventDataPerfSettingsEXT*)(baseEventHeader);
+                    (XrEventDataPerfSettingsEXT*)(baseEventHeader);
                 ALOGV(
-                        "xrPollEvent: received XR_TYPE_EVENT_DATA_PERF_SETTINGS_EXT event: type %d subdomain %d : level %d -> level %d",
-                        perf_settings_event->type,
-                        perf_settings_event->subDomain,
-                        perf_settings_event->fromLevel,
-                        perf_settings_event->toLevel);
+                    "xrPollEvent: received XR_TYPE_EVENT_DATA_PERF_SETTINGS_EXT event: type %d subdomain %d : level %d -> level %d",
+                    perf_settings_event->type,
+                    perf_settings_event->subDomain,
+                    perf_settings_event->fromLevel,
+                    perf_settings_event->toLevel);
             } break;
             case XR_TYPE_EVENT_DATA_REFERENCE_SPACE_CHANGE_PENDING:
                 ALOGV(
-                        "xrPollEvent: received XR_TYPE_EVENT_DATA_REFERENCE_SPACE_CHANGE_PENDING event");
+                    "xrPollEvent: received XR_TYPE_EVENT_DATA_REFERENCE_SPACE_CHANGE_PENDING event");
                 break;
             case XR_TYPE_EVENT_DATA_SESSION_STATE_CHANGED: {
                 const XrEventDataSessionStateChanged* session_state_changed_event =
-                        (XrEventDataSessionStateChanged*)(baseEventHeader);
+                    (XrEventDataSessionStateChanged*)(baseEventHeader);
                 ALOGV(
-                        "xrPollEvent: received XR_TYPE_EVENT_DATA_SESSION_STATE_CHANGED: %d for session %p at time %f",
-                        session_state_changed_event->state,
-                        (void*)session_state_changed_event->session,
-                        FromXrTime(session_state_changed_event->time));
+                    "xrPollEvent: received XR_TYPE_EVENT_DATA_SESSION_STATE_CHANGED: %d for session %p at time %f",
+                    session_state_changed_event->state,
+                    (void*)session_state_changed_event->session,
+                    FromXrTime(session_state_changed_event->time));
 
                 switch (session_state_changed_event->state) {
                     case XR_SESSION_STATE_FOCUSED:
@@ -663,21 +726,21 @@ void ovrApp::HandleXrEvents() {
             case XR_TYPE_EVENT_DATA_SPACE_SET_STATUS_COMPLETE_FB: {
                 ALOGV("xrPollEvent: received XR_TYPE_EVENT_DATA_SPACE_SET_STATUS_COMPLETE_FB");
                 const XrEventDataSpaceSetStatusCompleteFB* enableResult =
-                        (XrEventDataSpaceSetStatusCompleteFB*)(baseEventHeader);
+                    (XrEventDataSpaceSetStatusCompleteFB*)(baseEventHeader);
                 if (enableResult->result == XR_SUCCESS) {
                     if (enableResult->componentType == XR_SPACE_COMPONENT_TYPE_STORABLE_FB) {
                         XrSpaceSaveInfoFB saveInfo = {
-                                XR_TYPE_SPACE_SAVE_INFO_FB,
-                                nullptr,
-                                enableResult->space,
-                                XR_SPACE_STORAGE_LOCATION_LOCAL_FB,
-                                XR_SPACE_PERSISTENCE_MODE_INDEFINITE_FB};
+                            XR_TYPE_SPACE_SAVE_INFO_FB,
+                            nullptr,
+                            enableResult->space,
+                            XR_SPACE_STORAGE_LOCATION_LOCAL_FB,
+                            XR_SPACE_PERSISTENCE_MODE_INDEFINITE_FB};
 
                         // save the space
                         XrAsyncRequestIdFB requestId;
                         OXR(FunPtrs.xrSaveSpaceFB(Session, &saveInfo, &requestId));
                     } else if (
-                            enableResult->componentType == XR_SPACE_COMPONENT_TYPE_LOCATABLE_FB) {
+                        enableResult->componentType == XR_SPACE_COMPONENT_TYPE_LOCATABLE_FB) {
                         if (AppRenderer.Scene.SpaceList.size() < MAX_PERSISTENT_SPACES) {
                             AppRenderer.Scene.SpaceList.push_back(enableResult->space);
                         }
@@ -687,27 +750,27 @@ void ovrApp::HandleXrEvents() {
             case XR_TYPE_EVENT_DATA_SPATIAL_ANCHOR_CREATE_COMPLETE_FB: {
                 ALOGV("xrPollEvent: received XR_TYPE_EVENT_DATA_SPATIAL_ANCHOR_CREATE_COMPLETE_FB");
                 const XrEventDataSpatialAnchorCreateCompleteFB* createAnchorResult =
-                        (XrEventDataSpatialAnchorCreateCompleteFB*)(baseEventHeader);
+                    (XrEventDataSpatialAnchorCreateCompleteFB*)(baseEventHeader);
                 XrSpace space = createAnchorResult->space;
                 AppRenderer.Scene.SpaceList.push_back(space);
 
                 if (IsComponentSupported(space, XR_SPACE_COMPONENT_TYPE_STORABLE_FB)) {
                     XrSpaceComponentStatusSetInfoFB request = {
-                            XR_TYPE_SPACE_COMPONENT_STATUS_SET_INFO_FB,
-                            nullptr,
-                            XR_SPACE_COMPONENT_TYPE_STORABLE_FB,
-                            XR_TRUE,
-                            0};
+                        XR_TYPE_SPACE_COMPONENT_STATUS_SET_INFO_FB,
+                        nullptr,
+                        XR_SPACE_COMPONENT_TYPE_STORABLE_FB,
+                        XR_TRUE,
+                        0};
 
                     XrAsyncRequestIdFB requestId;
                     XrResult res = FunPtrs.xrSetSpaceComponentStatusFB(space, &request, &requestId);
                     if (res == XR_ERROR_SPACE_COMPONENT_STATUS_ALREADY_SET_FB) {
                         XrSpaceSaveInfoFB saveInfo = {
-                                XR_TYPE_SPACE_SAVE_INFO_FB,
-                                nullptr,
-                                space,
-                                XR_SPACE_STORAGE_LOCATION_LOCAL_FB,
-                                XR_SPACE_PERSISTENCE_MODE_INDEFINITE_FB};
+                            XR_TYPE_SPACE_SAVE_INFO_FB,
+                            nullptr,
+                            space,
+                            XR_SPACE_STORAGE_LOCATION_LOCAL_FB,
+                            XR_SPACE_PERSISTENCE_MODE_INDEFINITE_FB};
 
                         // save the space
                         ALOGV("Saving created anchor.");
@@ -715,15 +778,26 @@ void ovrApp::HandleXrEvents() {
                     }
                 }
 
+                if (IsComponentSupported(space, XR_SPACE_COMPONENT_TYPE_SHARABLE_FB)) {
+                    XrSpaceComponentStatusSetInfoFB request = {
+                        XR_TYPE_SPACE_COMPONENT_STATUS_SET_INFO_FB,
+                        nullptr,
+                        XR_SPACE_COMPONENT_TYPE_SHARABLE_FB,
+                        XR_TRUE,
+                        0};
+
+                    XrAsyncRequestIdFB requestId;
+                    FunPtrs.xrSetSpaceComponentStatusFB(space, &request, &requestId);
+                }
 
                 ALOGV(
-                        "Number of anchors after calling PlaceAnchor: %zu",
-                        AppRenderer.Scene.SpaceList.size());
+                    "Number of anchors after calling PlaceAnchor: %zu",
+                    AppRenderer.Scene.SpaceList.size());
             } break;
             case XR_TYPE_EVENT_DATA_SPACE_QUERY_RESULTS_AVAILABLE_FB: {
                 ALOGV("xrPollEvent: received XR_TYPE_EVENT_DATA_SPACE_QUERY_RESULTS_AVAILABLE_FB");
                 const auto resultsAvailable =
-                        (XrEventDataSpaceQueryResultsAvailableFB*)baseEventHeader;
+                    (XrEventDataSpaceQueryResultsAvailableFB*)baseEventHeader;
 
                 XrResult res = XR_SUCCESS;
 
@@ -733,7 +807,7 @@ void ovrApp::HandleXrEvents() {
                 queryResults.results = nullptr;
 
                 res = FunPtrs.xrRetrieveSpaceQueryResultsFB(
-                        Session, resultsAvailable->requestId, &queryResults);
+                    Session, resultsAvailable->requestId, &queryResults);
                 if (res != XR_SUCCESS) {
                     ALOGV("xrRetrieveSpaceQueryResultsFB: error %u", res);
                     break;
@@ -744,7 +818,7 @@ void ovrApp::HandleXrEvents() {
                 queryResults.results = results.data();
 
                 res = FunPtrs.xrRetrieveSpaceQueryResultsFB(
-                        Session, resultsAvailable->requestId, &queryResults);
+                    Session, resultsAvailable->requestId, &queryResults);
                 if (res != XR_SUCCESS) {
                     ALOGV("xrRetrieveSpaceQueryResultsFB: error %u", res);
                     break;
@@ -755,14 +829,14 @@ void ovrApp::HandleXrEvents() {
 
                     if (IsComponentSupported(result.space, XR_SPACE_COMPONENT_TYPE_LOCATABLE_FB)) {
                         XrSpaceComponentStatusSetInfoFB request = {
-                                XR_TYPE_SPACE_COMPONENT_STATUS_SET_INFO_FB,
-                                nullptr,
-                                XR_SPACE_COMPONENT_TYPE_LOCATABLE_FB,
-                                XR_TRUE,
-                                0};
+                            XR_TYPE_SPACE_COMPONENT_STATUS_SET_INFO_FB,
+                            nullptr,
+                            XR_SPACE_COMPONENT_TYPE_LOCATABLE_FB,
+                            XR_TRUE,
+                            0};
                         XrAsyncRequestIdFB requestId;
                         res =
-                                FunPtrs.xrSetSpaceComponentStatusFB(result.space, &request, &requestId);
+                            FunPtrs.xrSetSpaceComponentStatusFB(result.space, &request, &requestId);
                         if (res == XR_ERROR_SPACE_COMPONENT_STATUS_ALREADY_SET_FB) {
                             if (AppRenderer.Scene.SpaceList.size() < MAX_PERSISTENT_SPACES) {
                                 AppRenderer.Scene.SpaceList.push_back(result.space);
@@ -772,35 +846,107 @@ void ovrApp::HandleXrEvents() {
 
                     if (IsComponentSupported(result.space, XR_SPACE_COMPONENT_TYPE_STORABLE_FB)) {
                         XrSpaceComponentStatusSetInfoFB request = {
-                                XR_TYPE_SPACE_COMPONENT_STATUS_SET_INFO_FB,
-                                nullptr,
-                                XR_SPACE_COMPONENT_TYPE_STORABLE_FB,
-                                XR_TRUE,
-                                0};
+                            XR_TYPE_SPACE_COMPONENT_STATUS_SET_INFO_FB,
+                            nullptr,
+                            XR_SPACE_COMPONENT_TYPE_STORABLE_FB,
+                            XR_TRUE,
+                            0};
                         XrAsyncRequestIdFB requestId;
                         res =
-                                FunPtrs.xrSetSpaceComponentStatusFB(result.space, &request, &requestId);
+                            FunPtrs.xrSetSpaceComponentStatusFB(result.space, &request, &requestId);
                         if (res == XR_ERROR_SPACE_COMPONENT_STATUS_ALREADY_SET_FB) {
                             ALOGV(
-                                    "xrPollEvent: Storable component was already enabled for Space uuid: %s",
-                                    uuidToHexString(result.uuid).c_str());
+                                "xrPollEvent: Storable component was already enabled for Space uuid: %s",
+                                uuidToHexString(result.uuid).c_str());
                         }
                     }
 
+                    if (IsComponentSupported(result.space, XR_SPACE_COMPONENT_TYPE_SHARABLE_FB)) {
+                        XrSpaceComponentStatusSetInfoFB request = {
+                            XR_TYPE_SPACE_COMPONENT_STATUS_SET_INFO_FB,
+                            nullptr,
+                            XR_SPACE_COMPONENT_TYPE_SHARABLE_FB,
+                            XR_TRUE,
+                            0};
+                        XrAsyncRequestIdFB requestId;
+                        res =
+                            FunPtrs.xrSetSpaceComponentStatusFB(result.space, &request, &requestId);
+                        if (res == XR_ERROR_SPACE_COMPONENT_STATUS_ALREADY_SET_FB) {
+                            ALOGV(
+                                "xrPollEvent: Sharable component was already enabled for Space uuid: %s",
+                                uuidToHexString(result.uuid).c_str());
+                        }
+                    }
                 }
 
                 ALOGV(
-                        "Number of anchors after receiving XR_TYPE_EVENT_DATA_SPACE_QUERY_RESULTS_AVAILABLE_FB: %zu",
-                        AppRenderer.Scene.SpaceList.size());
+                    "Number of anchors after receiving XR_TYPE_EVENT_DATA_SPACE_QUERY_RESULTS_AVAILABLE_FB: %zu",
+                    AppRenderer.Scene.SpaceList.size());
 
             } break;
             case XR_TYPE_EVENT_DATA_SPACE_QUERY_COMPLETE_FB: {
                 ALOGV("xrPollEvent: received XR_TYPE_EVENT_DATA_SPACE_QUERY_COMPLETE_FB");
             } break;
+            case XR_TYPE_EVENT_DATA_SPACE_LIST_SAVE_COMPLETE_FB: {
+                ALOGV("xrPollEvent: received XR_TYPE_EVENT_DATA_SPACE_LIST_SAVE_COMPLETE_FB");
+                const XrEventDataSpaceListSaveCompleteFB* saveResult =
+                    (XrEventDataSpaceListSaveCompleteFB*)(baseEventHeader);
+
+                if (saveResult->result != XR_SUCCESS) {
+                    ALOGV(
+                        "xrPollEvent: XR_TYPE_EVENT_DATA_SPACE_LIST_SAVE_COMPLETE_FB came with error result: %d",
+                        saveResult->result);
+                } else {
+                    auto requestId = saveResult->requestId;
+                    auto itr = SaveSpaceListCloudEventMap.find(requestId);
+                    if (itr == SaveSpaceListCloudEventMap.end()) {
+                        ALOGV(
+                            "xrPollEvent: no requestId found in map for XR_TYPE_EVENT_DATA_SPACE_LIST_SAVE_COMPLETE_FB");
+                    } else {
+                        if (IsLocalMultiplayerSupported) {
+                            auto spaceList = std::move(itr->second);
+                            SaveSpaceListCloudEventMap.erase(itr);
+
+                            // Skip the share step if there are no users to share with.
+                            if (ShareUserList.empty()) {
+                                ALOGW(
+                                    "xrPollEvent: no users specified for share operation. Skipping share.");
+                            } else {
+                                // Set up the share audience
+                                std::vector<XrSpaceUserFB> users;
+                                for (std::size_t k = 0; k < ShareUserList.size(); k++) {
+                                    XrSpaceUserFB user;
+                                    XrSpaceUserCreateInfoFB createInfo = {
+                                        XR_TYPE_SPACE_USER_CREATE_INFO_FB,
+                                        nullptr,
+                                        ShareUserList[k]};
+                                    OXR(FunPtrs.xrCreateSpaceUserFB(Session, &createInfo, &user));
+                                    users.push_back(user);
+                                }
+
+                                XrSpaceShareInfoFB shareInfo = {
+                                    XR_TYPE_SPACE_SHARE_INFO_FB,
+                                    nullptr,
+                                    static_cast<uint32_t>(spaceList.size()),
+                                    spaceList.data(),
+                                    static_cast<uint32_t>(users.size()),
+                                    users.data()};
+                                XrAsyncRequestIdFB shareRequestId;
+                                OXR(FunPtrs.xrShareSpacesFB(Session, &shareInfo, &shareRequestId));
+                                ShareSpacesEventMap[shareRequestId] =
+                                    std::make_pair(spaceList, users);
+                            }
+                        } else {
+                            ALOGW(
+                                "xrPollEvent: Local multiplayer is not supported. Skipped sharing anchors.");
+                        }
+                    }
+                }
+            } break;
             case XR_TYPE_EVENT_DATA_SPACE_SAVE_COMPLETE_FB: {
                 ALOGV("xrPollEvent: received XR_TYPE_EVENT_DATA_SPACE_SAVE_COMPLETE_FB");
                 const XrEventDataSpaceSaveCompleteFB* saveResult =
-                        (XrEventDataSpaceSaveCompleteFB*)(baseEventHeader);
+                    (XrEventDataSpaceSaveCompleteFB*)(baseEventHeader);
 
                 if (saveResult->result == XR_SUCCESS) {
                     ALOGV("xrPollEvent: Save Space successful!");
@@ -814,7 +960,7 @@ void ovrApp::HandleXrEvents() {
             case XR_TYPE_EVENT_DATA_SPACE_ERASE_COMPLETE_FB: {
                 ALOGV("xrPollEvent: received XR_TYPE_EVENT_DATA_SPACE_ERASE_COMPLETE_FB");
                 const XrEventDataSpaceEraseCompleteFB* eraseResult =
-                        (XrEventDataSpaceEraseCompleteFB*)(baseEventHeader);
+                    (XrEventDataSpaceEraseCompleteFB*)(baseEventHeader);
 
                 if (eraseResult->result == XR_SUCCESS) {
                     ALOGV("xrPollEvent: Erase Space successful!");
@@ -826,9 +972,54 @@ void ovrApp::HandleXrEvents() {
                     const std::string hexStr = uuidToHexString(eraseResult->uuid);
                     ALOGV("xrPollEvent: Erase Space uuid: %s", hexStr.c_str());
                     ALOGV(
-                            "xrPollEvent: Erase Space Async Request: %" PRIu64, eraseResult->requestId);
+                        "xrPollEvent: Erase Space Async Request: %" PRIu64, eraseResult->requestId);
                 } else {
                     ALOGV("xrPollEvent: Erase Space failed!");
+                }
+            } break;
+            case XR_TYPE_EVENT_DATA_SPACE_SHARE_COMPLETE_FB: {
+                ALOGV("xrPollEvent: received XR_TYPE_EVENT_DATA_SPACE_SHARE_COMPLETE_FB");
+                const XrEventDataSpaceShareCompleteFB* shareResult =
+                    (XrEventDataSpaceShareCompleteFB*)(baseEventHeader);
+
+                ALOGV(
+                    "xrPollEvent: xrShareSpacesFB request %" PRIu64 " completed with result (%d)",
+                    shareResult->requestId,
+                    shareResult->result);
+                auto itr = ShareSpacesEventMap.find(shareResult->requestId);
+                if (itr != ShareSpacesEventMap.end()) {
+                    auto spaces = std::move(itr->second.first);
+                    auto users = std::move(itr->second.second);
+                    ShareSpacesEventMap.erase(itr);
+                    if (shareResult->result == XR_SUCCESS) {
+                        std::vector<XrUuidEXT> sharedSpatialAnchors;
+                        for (std::size_t k = 0; k < spaces.size(); k++) {
+                            XrUuidEXT uuid;
+                            OXR(FunPtrs.xrGetSpaceUuidFB(spaces[k], &uuid));
+                            ALOGV("xrPollEvent: Shared space %s", uuidToHexString(uuid).c_str());
+                            sharedSpatialAnchors.emplace_back(uuid);
+                        }
+
+                        std::vector<XrSpaceUserIdFB> sharedUserIds;
+                        for (std::size_t k = 0; k < users.size(); k++) {
+                            XrSpaceUserIdFB userId;
+                            OXR(FunPtrs.xrGetSpaceUserIdFB(users[k], &userId));
+                            ALOGV("xrPollEvent: Shared spaces with user %" PRIu64, userId);
+                            sharedUserIds.emplace_back(userId);
+                        }
+
+                        ExternalDataHandler->WriteSharedSpatialAnchorList(
+                            sharedSpatialAnchors, sharedUserIds);
+                    }
+                    // We're done with the user handles at this point, so destroy them.
+                    for (std::size_t k = 0; k < users.size(); k++) {
+                        OXR(FunPtrs.xrDestroySpaceUserFB(users[k]));
+                        ALOGV("xrPollEvent: Destroyed user handle %" PRIu64, (uint64_t)users[k]);
+                    }
+                } else {
+                    ALOGE(
+                        "Failed to match xrShareSpacesFB request data to requestId %" PRIu64,
+                        shareResult->requestId);
                 }
             } break;
             default:
@@ -846,6 +1037,7 @@ Native Activity
 ================================================================================
 */
 
+#if defined(ANDROID)
 /**
  * Process the next main command.
  */
@@ -881,42 +1073,41 @@ static void app_handle_cmd(struct android_app* androidApp, int32_t cmd) {
         case APP_CMD_DESTROY: {
             ALOGV("onDestroy()");
             ALOGV("    APP_CMD_DESTROY");
-            app.NativeWindow = NULL;
+            app.Clear();
             break;
         }
         case APP_CMD_INIT_WINDOW: {
             ALOGV("surfaceCreated()");
             ALOGV("    APP_CMD_INIT_WINDOW");
-            app.NativeWindow = androidApp->window;
             break;
         }
         case APP_CMD_TERM_WINDOW: {
             ALOGV("surfaceDestroyed()");
             ALOGV("    APP_CMD_TERM_WINDOW");
-            app.NativeWindow = NULL;
             break;
         }
     }
 }
+#endif // defined(ANDROID)
 
 static Matrix4f OvrFromXr(const XrMatrix4x4f& x) {
     return Matrix4f(
-            x.m[0x0],
-            x.m[0x1],
-            x.m[0x2],
-            x.m[0x3],
-            x.m[0x4],
-            x.m[0x5],
-            x.m[0x6],
-            x.m[0x7],
-            x.m[0x8],
-            x.m[0x9],
-            x.m[0xa],
-            x.m[0xb],
-            x.m[0xc],
-            x.m[0xd],
-            x.m[0xe],
-            x.m[0xf]);
+        x.m[0x0],
+        x.m[0x1],
+        x.m[0x2],
+        x.m[0x3],
+        x.m[0x4],
+        x.m[0x5],
+        x.m[0x6],
+        x.m[0x7],
+        x.m[0x8],
+        x.m[0x9],
+        x.m[0xa],
+        x.m[0xb],
+        x.m[0xc],
+        x.m[0xd],
+        x.m[0xe],
+        x.m[0xf]);
 }
 
 static Quatf OvrFromXr(const XrQuaternionf& q) {
@@ -934,19 +1125,87 @@ static Posef OvrFromXr(const XrPosef& p) {
 static void QueryAnchors(ovrApp& app) {
     ALOGV("QueryAnchors");
     XrSpaceQueryInfoFB queryInfo = {
-            XR_TYPE_SPACE_QUERY_INFO_FB,
-            nullptr,
-            XR_SPACE_QUERY_ACTION_LOAD_FB,
-            MAX_PERSISTENT_SPACES,
-            0,
-            nullptr,
-            nullptr};
+        XR_TYPE_SPACE_QUERY_INFO_FB,
+        nullptr,
+        XR_SPACE_QUERY_ACTION_LOAD_FB,
+        MAX_PERSISTENT_SPACES,
+        0,
+        nullptr,
+        nullptr};
 
     XrAsyncRequestIdFB requestId;
     OXR(app.FunPtrs.xrQuerySpacesFB(
-            app.Session, (XrSpaceQueryInfoBaseHeaderFB*)&queryInfo, &requestId));
+        app.Session, (XrSpaceQueryInfoBaseHeaderFB*)&queryInfo, &requestId));
 }
 
+static void DownloadAnchors(ovrApp& app) {
+    ALOGV("DownloadAnchors");
+    if (!app.IsLocalMultiplayerSupported) {
+        ALOGW("Local multiplayer is not supported. Skipping download.");
+        return;
+    }
+
+    if (app.InboundSpatialAnchorList.empty()) {
+        ALOGW("DownloadAnchors: No Spatial Anchors to download");
+        return;
+    }
+
+    XrSpaceStorageLocationFilterInfoFB locationFilterInfo = {
+        XR_TYPE_SPACE_STORAGE_LOCATION_FILTER_INFO_FB, nullptr, XR_SPACE_STORAGE_LOCATION_CLOUD_FB};
+    XrSpaceUuidFilterInfoFB uuidFilterInfo = {
+        XR_TYPE_SPACE_UUID_FILTER_INFO_FB,
+        &locationFilterInfo,
+        (uint32_t)app.InboundSpatialAnchorList.size(),
+        app.InboundSpatialAnchorList.data()};
+    XrSpaceQueryInfoFB queryInfo = {
+        XR_TYPE_SPACE_QUERY_INFO_FB,
+        nullptr,
+        XR_SPACE_QUERY_ACTION_LOAD_FB,
+        MAX_PERSISTENT_SPACES,
+        0,
+        (XrSpaceFilterInfoBaseHeaderFB*)&uuidFilterInfo,
+        nullptr};
+    XrAsyncRequestIdFB requestId;
+    OXR(app.FunPtrs.xrQuerySpacesFB(
+        app.Session, (XrSpaceQueryInfoBaseHeaderFB*)&queryInfo, &requestId));
+}
+
+static void UploadAndShareAnchors(ovrApp& app) {
+    ALOGV("UploadAndShareAnchors");
+
+    if (!app.IsLocalMultiplayerSupported) {
+        ALOGW("UploadAndShareAnchors: Local multiplayer is not supported. Skipping upload.");
+        return;
+    }
+
+    std::vector<XrSpace> spaceList;
+    for (XrSpace space : app.AppRenderer.Scene.SpaceList) {
+        // We will only upload Anchors that are Storable and Sharable.
+        XrSpaceComponentStatusFB storableStatus;
+        XrSpaceComponentStatusFB sharableStatus;
+        OXR(app.FunPtrs.xrGetSpaceComponentStatusFB(
+            space, XR_SPACE_COMPONENT_TYPE_STORABLE_FB, &storableStatus));
+        OXR(app.FunPtrs.xrGetSpaceComponentStatusFB(
+            space, XR_SPACE_COMPONENT_TYPE_SHARABLE_FB, &sharableStatus));
+        if (storableStatus.enabled && sharableStatus.enabled) {
+            spaceList.push_back(space);
+        }
+    }
+
+    XrAsyncRequestIdFB saveRequest;
+    XrSpaceListSaveInfoFB saveInfo = {
+        XR_TYPE_SPACE_LIST_SAVE_INFO_FB,
+        nullptr,
+        static_cast<uint32_t>(spaceList.size()),
+        spaceList.data(),
+        XR_SPACE_STORAGE_LOCATION_CLOUD_FB};
+    OXR(app.FunPtrs.xrSaveSpaceListFB(app.Session, &saveInfo, &saveRequest));
+
+    // The rest will continue on the completion of xrSaveSpaceListFB.
+    // Add the current spaces to the map. This step needs to be a copy here because we're taking a
+    // snapshot of the Spatial Anchors in the app state.
+    app.SaveSpaceListCloudEventMap[saveRequest] = spaceList;
+}
 
 void UpdateStageBounds(ovrApp& app) {
     XrExtent2Df stageBounds = {};
@@ -964,14 +1223,14 @@ void UpdateStageBounds(ovrApp& app) {
 }
 
 void DestroyAnchor(ovrApp& app) {
-    if (app.AppRenderer.Scene.SpaceList.size() == 0) {
+    if (app.AppRenderer.Scene.SpaceList.empty()) {
         return;
     }
 
     XrSpace space = app.AppRenderer.Scene.SpaceList.back();
     app.AppRenderer.Scene.SpaceList.pop_back();
     XrSpaceEraseInfoFB eraseInfo = {
-            XR_TYPE_SPACE_ERASE_INFO_FB, nullptr, space, XR_SPACE_STORAGE_LOCATION_LOCAL_FB};
+        XR_TYPE_SPACE_ERASE_INFO_FB, nullptr, space, XR_SPACE_STORAGE_LOCATION_LOCAL_FB};
 
     XrAsyncRequestIdFB requestId;
     XrResult res = XR_SUCCESS;
@@ -981,14 +1240,13 @@ void DestroyAnchor(ovrApp& app) {
     }
 
     ALOGV(
-            "Number of anchors after calling DestroyAnchor: %zu",
-            app.AppRenderer.Scene.SpaceList.size());
+        "Number of anchors after calling DestroyAnchor: %zu",
+        app.AppRenderer.Scene.SpaceList.size());
 }
 
 void PlaceAnchor(ovrApp& app, SimpleXrInput* input, const XrFrameState& frameState) {
     // Handle Right Controller Events
     if (input == nullptr) {
-        ALOGE("input == nullptr");
         return;
     }
 
@@ -1001,14 +1259,12 @@ void PlaceAnchor(ovrApp& app, SimpleXrInput* input, const XrFrameState& frameSta
     }
 
     OVR::Posef localFromRightAim = input->FromControllerSpace(
-            SimpleXrInput::Side_Right,
-            SimpleXrInput::Controller_Aim,
-            app.LocalSpace,
-            frameState.predictedDisplayTime);
+        SimpleXrInput::Side_Right,
+        SimpleXrInput::Controller_Aim,
+        app.LocalSpace,
+        frameState.predictedDisplayTime);
 
-    XrSpatialAnchorCreateInfoFB anchorCreateInfo = {};
-    anchorCreateInfo.type = XR_TYPE_SPATIAL_ANCHOR_CREATE_INFO_FB;
-    anchorCreateInfo.next = NULL;
+    XrSpatialAnchorCreateInfoFB anchorCreateInfo = {XR_TYPE_SPATIAL_ANCHOR_CREATE_INFO_FB};
     anchorCreateInfo.space = app.LocalSpace;
     anchorCreateInfo.poseInSpace = ToXrPosef(localFromRightAim);
     anchorCreateInfo.time = frameState.predictedDisplayTime;
@@ -1017,13 +1273,18 @@ void PlaceAnchor(ovrApp& app, SimpleXrInput* input, const XrFrameState& frameSta
     ALOGV("Place Spatial Anchor initiated.");
 }
 
+#if defined(XR_USE_PLATFORM_ANDROID)
 /**
  * This is the main entry point of a native application that is using
  * android_native_app_glue.  It runs in its own thread, with its own
  * event loop for receiving input events and doing other things.
  */
 void android_main(struct android_app* androidApp) {
+#else
+int main() {
+#endif // defined(XR_USE_PLATFORM_ANDROID)
 
+#if defined(XR_USE_PLATFORM_ANDROID)
     ALOGV("----------------------------------------------------------------");
     ALOGV("android_app_entry()");
     ALOGV("    android_main()");
@@ -1033,22 +1294,22 @@ void android_main(struct android_app* androidApp) {
 
     // Note that AttachCurrentThread will reset the thread name.
     prctl(PR_SET_NAME, (long)"OVR::Main", 0, 0, 0);
+#endif // defined(XR_USE_PLATFORM_ANDROID)
 
     ovrApp app;
     app.Clear();
 
+#if defined(XR_USE_PLATFORM_ANDROID)
     PFN_xrInitializeLoaderKHR xrInitializeLoaderKHR;
     xrGetInstanceProcAddr(
-            XR_NULL_HANDLE, "xrInitializeLoaderKHR", (PFN_xrVoidFunction*)&xrInitializeLoaderKHR);
+        XR_NULL_HANDLE, "xrInitializeLoaderKHR", (PFN_xrVoidFunction*)&xrInitializeLoaderKHR);
     if (xrInitializeLoaderKHR != NULL) {
-        XrLoaderInitInfoAndroidKHR loaderInitializeInfoAndroid;
-        memset(&loaderInitializeInfoAndroid, 0, sizeof(loaderInitializeInfoAndroid));
-        loaderInitializeInfoAndroid.type = XR_TYPE_LOADER_INIT_INFO_ANDROID_KHR;
-        loaderInitializeInfoAndroid.next = NULL;
+        XrLoaderInitInfoAndroidKHR loaderInitializeInfoAndroid = {XR_TYPE_LOADER_INIT_INFO_ANDROID_KHR};
         loaderInitializeInfoAndroid.applicationVM = androidApp->activity->vm;
         loaderInitializeInfoAndroid.applicationContext = androidApp->activity->clazz;
         xrInitializeLoaderKHR((XrLoaderInitInfoBaseHeaderKHR*)&loaderInitializeInfoAndroid);
     }
+#endif // defined(XR_USE_PLATFORM_ANDROID)
 
     // Log available layers.
     {
@@ -1064,40 +1325,43 @@ void android_main(struct android_app* androidApp) {
             exit(1);
         }
 
-        uint32_t numInputLayers = 0;
-        uint32_t numOutputLayers = 0;
-        OXR(xrEnumerateApiLayerProperties(numInputLayers, &numOutputLayers, NULL));
+        uint32_t layerCount = 0;
+        OXR(xrEnumerateApiLayerProperties(0, &layerCount, NULL));
+        std::vector<XrApiLayerProperties> layerProperties(layerCount, {XR_TYPE_API_LAYER_PROPERTIES});
+        OXR(xrEnumerateApiLayerProperties(layerCount, &layerCount, layerProperties.data()));
 
-        numInputLayers = numOutputLayers;
-
-        auto layerProperties = new XrApiLayerProperties[numOutputLayers];
-
-        for (uint32_t i = 0; i < numOutputLayers; i++) {
-            layerProperties[i].type = XR_TYPE_API_LAYER_PROPERTIES;
-            layerProperties[i].next = NULL;
+        for (const auto& layer : layerProperties) {
+            ALOGV("Found layer %s", layer.layerName);
         }
-
-        OXR(xrEnumerateApiLayerProperties(numInputLayers, &numOutputLayers, layerProperties));
-
-        for (uint32_t i = 0; i < numOutputLayers; i++) {
-            ALOGV("Found layer %s", layerProperties[i].layerName);
-        }
-
-        delete[] layerProperties;
     }
 
     // Check that the extensions required are present.
-    const char* const requiredExtensionNames[] = {
-            XR_KHR_OPENGL_ES_ENABLE_EXTENSION_NAME,
-            XR_EXT_PERFORMANCE_SETTINGS_EXTENSION_NAME,
-            XR_KHR_ANDROID_THREAD_SETTINGS_EXTENSION_NAME,
-            XR_FB_PASSTHROUGH_EXTENSION_NAME,
-            XR_FB_SPATIAL_ENTITY_EXTENSION_NAME,
-            XR_FB_SPATIAL_ENTITY_QUERY_EXTENSION_NAME,
-            XR_FB_SPATIAL_ENTITY_STORAGE_EXTENSION_NAME
+    std::vector<const char*> requiredExtensionNames {
+#if defined(XR_USE_GRAPHICS_API_OPENGL_ES)
+        XR_KHR_OPENGL_ES_ENABLE_EXTENSION_NAME,
+#elif defined(XR_USE_GRAPHICS_API_OPENGL)
+        XR_KHR_OPENGL_ENABLE_EXTENSION_NAME,
+#endif
+#if defined(XR_USE_PLATFORM_ANDROID)
+        XR_EXT_PERFORMANCE_SETTINGS_EXTENSION_NAME,
+        XR_KHR_ANDROID_THREAD_SETTINGS_EXTENSION_NAME,
+#endif // defined(XR_USE_PLATFORM_ANDROID)
+        XR_FB_PASSTHROUGH_EXTENSION_NAME,
+        XR_FB_SPATIAL_ENTITY_EXTENSION_NAME,
+        XR_FB_SPATIAL_ENTITY_QUERY_EXTENSION_NAME,
+        XR_FB_SPATIAL_ENTITY_STORAGE_BATCH_EXTENSION_NAME,
+        XR_FB_SPATIAL_ENTITY_STORAGE_EXTENSION_NAME
     };
-    const uint32_t numRequiredExtensions =
-            sizeof(requiredExtensionNames) / sizeof(requiredExtensionNames[0]);
+    const uint32_t numRequiredExtensions = requiredExtensionNames.size();
+
+    std::vector<const char*> localMultiplayerExtensionNames {
+        XR_FB_SPATIAL_ENTITY_SHARING_EXTENSION_NAME,
+        XR_FB_SPATIAL_ENTITY_USER_EXTENSION_NAME
+    };
+    const uint32_t numLocalMultiplayerExtensions = localMultiplayerExtensionNames.size();
+
+    std::vector<const char*> requestedExtensionNames(
+        requiredExtensionNames.begin(), requiredExtensionNames.end());
 
     // Check the list of required extensions against what is supported by the runtime.
     {
@@ -1115,7 +1379,7 @@ void android_main(struct android_app* androidApp) {
         uint32_t numInputExtensions = 0;
         uint32_t numOutputExtensions = 0;
         OXR(xrEnumerateInstanceExtensionProperties(
-                NULL, numInputExtensions, &numOutputExtensions, NULL));
+            NULL, numInputExtensions, &numOutputExtensions, NULL));
         ALOGV("xrEnumerateInstanceExtensionProperties found %u extension(s).", numOutputExtensions);
 
         numInputExtensions = numOutputExtensions;
@@ -1128,23 +1392,36 @@ void android_main(struct android_app* androidApp) {
         }
 
         OXR(xrEnumerateInstanceExtensionProperties(
-                NULL, numInputExtensions, &numOutputExtensions, extensionProperties));
+            NULL, numInputExtensions, &numOutputExtensions, extensionProperties));
         for (uint32_t i = 0; i < numOutputExtensions; i++) {
             ALOGV("Extension #%d = '%s'.", i, extensionProperties[i].extensionName);
         }
 
         for (uint32_t i = 0; i < numRequiredExtensions; i++) {
-            bool found = false;
-            for (uint32_t j = 0; j < numOutputExtensions; j++) {
-                if (!strcmp(requiredExtensionNames[i], extensionProperties[j].extensionName)) {
-                    ALOGV("Found required extension %s", requiredExtensionNames[i]);
-                    found = true;
-                    break;
-                }
-            }
-            if (!found) {
+            if (!isExtensionEnumerated(
+                    requiredExtensionNames[i],
+                    extensionProperties,
+                    numOutputExtensions)) {
                 ALOGE("Failed to find required extension %s", requiredExtensionNames[i]);
                 exit(1);
+            } else {
+                ALOGV("Found required extension %s", requiredExtensionNames[i]);
+            }
+        }
+
+        app.IsLocalMultiplayerSupported = true;
+        for (uint32_t i = 0; i < numLocalMultiplayerExtensions; i++) {
+            if (!isExtensionEnumerated(
+                    localMultiplayerExtensionNames[i],
+                    extensionProperties,
+                    numOutputExtensions)) {
+                ALOGW(
+                    "Failed to find local multiplayer extension %s - feature is not supported on this device",
+                    localMultiplayerExtensionNames[i]);
+                app.IsLocalMultiplayerSupported = false;
+            } else {
+                ALOGV("Found local multiplayer extension %s", localMultiplayerExtensionNames[i]);
+                requestedExtensionNames.push_back(localMultiplayerExtensionNames[i]);
             }
         }
 
@@ -1159,15 +1436,13 @@ void android_main(struct android_app* androidApp) {
     appInfo.engineVersion = 0;
     appInfo.apiVersion = XR_CURRENT_API_VERSION;
 
-    XrInstanceCreateInfo instanceCreateInfo = {};
-    instanceCreateInfo.type = XR_TYPE_INSTANCE_CREATE_INFO;
-    instanceCreateInfo.next = nullptr;
+    XrInstanceCreateInfo instanceCreateInfo = {XR_TYPE_INSTANCE_CREATE_INFO};
     instanceCreateInfo.createFlags = 0;
     instanceCreateInfo.applicationInfo = appInfo;
     instanceCreateInfo.enabledApiLayerCount = 0;
     instanceCreateInfo.enabledApiLayerNames = NULL;
-    instanceCreateInfo.enabledExtensionCount = numRequiredExtensions;
-    instanceCreateInfo.enabledExtensionNames = requiredExtensionNames;
+    instanceCreateInfo.enabledExtensionCount = requestedExtensionNames.size();
+    instanceCreateInfo.enabledExtensionNames = requestedExtensionNames.data();
 
     XrResult initResult;
     OXR(initResult = xrCreateInstance(&instanceCreateInfo, &instance));
@@ -1176,20 +1451,16 @@ void android_main(struct android_app* androidApp) {
         exit(1);
     }
 
-    XrInstanceProperties instanceInfo;
-    instanceInfo.type = XR_TYPE_INSTANCE_PROPERTIES;
-    instanceInfo.next = NULL;
+    XrInstanceProperties instanceInfo = {XR_TYPE_INSTANCE_PROPERTIES};
     OXR(xrGetInstanceProperties(instance, &instanceInfo));
     ALOGV(
-            "Runtime %s: Version : %u.%u.%u",
-            instanceInfo.runtimeName,
-            XR_VERSION_MAJOR(instanceInfo.runtimeVersion),
-            XR_VERSION_MINOR(instanceInfo.runtimeVersion),
-            XR_VERSION_PATCH(instanceInfo.runtimeVersion));
+        "Runtime %s: Version : %u.%u.%u",
+        instanceInfo.runtimeName,
+        XR_VERSION_MAJOR(instanceInfo.runtimeVersion),
+        XR_VERSION_MINOR(instanceInfo.runtimeVersion),
+        XR_VERSION_PATCH(instanceInfo.runtimeVersion));
 
-    XrSystemGetInfo systemGetInfo = {};
-    systemGetInfo.type = XR_TYPE_SYSTEM_GET_INFO;
-    systemGetInfo.next = NULL;
+    XrSystemGetInfo systemGetInfo = {XR_TYPE_SYSTEM_GET_INFO};
     systemGetInfo.formFactor = XR_FORM_FACTOR_HEAD_MOUNTED_DISPLAY;
 
     XrSystemId systemId;
@@ -1199,36 +1470,59 @@ void android_main(struct android_app* androidApp) {
         exit(1);
     }
 
-    XrSystemProperties systemProperties = {};
-    systemProperties.type = XR_TYPE_SYSTEM_PROPERTIES;
+    XrSystemProperties systemProperties = {XR_TYPE_SYSTEM_PROPERTIES};
     OXR(xrGetSystemProperties(instance, systemId, &systemProperties));
 
     ALOGV(
-            "System Properties: Name=%s VendorId=%x",
-            systemProperties.systemName,
-            systemProperties.vendorId);
+        "System Properties: Name=%s VendorId=%x",
+        systemProperties.systemName,
+        systemProperties.vendorId);
     ALOGV(
-            "System Graphics Properties: MaxWidth=%d MaxHeight=%d MaxLayers=%d",
-            systemProperties.graphicsProperties.maxSwapchainImageWidth,
-            systemProperties.graphicsProperties.maxSwapchainImageHeight,
-            systemProperties.graphicsProperties.maxLayerCount);
+        "System Graphics Properties: MaxWidth=%d MaxHeight=%d MaxLayers=%d",
+        systemProperties.graphicsProperties.maxSwapchainImageWidth,
+        systemProperties.graphicsProperties.maxSwapchainImageHeight,
+        systemProperties.graphicsProperties.maxLayerCount);
     ALOGV(
-            "System Tracking Properties: OrientationTracking=%s PositionTracking=%s",
-            systemProperties.trackingProperties.orientationTracking ? "True" : "False",
-            systemProperties.trackingProperties.positionTracking ? "True" : "False");
+        "System Tracking Properties: OrientationTracking=%s PositionTracking=%s",
+        systemProperties.trackingProperties.orientationTracking ? "True" : "False",
+        systemProperties.trackingProperties.positionTracking ? "True" : "False");
+
+    {
+        const char* deviceQuestProName = "Meta Quest Pro";
+        const char* deviceQuest2Name = "Oculus Quest2";
+        if (strcmp(systemProperties.systemName, deviceQuestProName) == 0 || strcmp(systemProperties.systemName, deviceQuest2Name) == 0) {
+            ALOGV("Local multiplayer is supported on this device");
+            app.IsLocalMultiplayerSupported = true;
+        } else {
+            ALOGW(
+                "Local multiplayer is currently only supported on Meta Quest 2 or above. Local multiplayer features in this app are not available on Quest 1.");
+            app.IsLocalMultiplayerSupported = false;
+        }
+    }
 
     assert(ovrMaxLayerCount <= systemProperties.graphicsProperties.maxLayerCount);
 
+#if defined(XR_USE_GRAPHICS_API_OPENGL_ES)
     // Get the graphics requirements.
     PFN_xrGetOpenGLESGraphicsRequirementsKHR pfnGetOpenGLESGraphicsRequirementsKHR = NULL;
     OXR(xrGetInstanceProcAddr(
-            instance,
-            "xrGetOpenGLESGraphicsRequirementsKHR",
-            (PFN_xrVoidFunction*)(&pfnGetOpenGLESGraphicsRequirementsKHR)));
+        instance,
+        "xrGetOpenGLESGraphicsRequirementsKHR",
+        (PFN_xrVoidFunction*)(&pfnGetOpenGLESGraphicsRequirementsKHR)));
 
-    XrGraphicsRequirementsOpenGLESKHR graphicsRequirements = {};
-    graphicsRequirements.type = XR_TYPE_GRAPHICS_REQUIREMENTS_OPENGL_ES_KHR;
+    XrGraphicsRequirementsOpenGLESKHR graphicsRequirements = {XR_TYPE_GRAPHICS_REQUIREMENTS_OPENGL_ES_KHR};
     OXR(pfnGetOpenGLESGraphicsRequirementsKHR(instance, systemId, &graphicsRequirements));
+#elif defined(XR_USE_GRAPHICS_API_OPENGL)
+    // Get the graphics requirements.
+    PFN_xrGetOpenGLGraphicsRequirementsKHR pfnGetOpenGLGraphicsRequirementsKHR = NULL;
+    OXR(xrGetInstanceProcAddr(
+        instance,
+        "xrGetOpenGLGraphicsRequirementsKHR",
+        (PFN_xrVoidFunction*)(&pfnGetOpenGLGraphicsRequirementsKHR)));
+
+    XrGraphicsRequirementsOpenGLKHR graphicsRequirements = {XR_TYPE_GRAPHICS_REQUIREMENTS_OPENGL_KHR};
+    OXR(pfnGetOpenGLGraphicsRequirementsKHR(instance, systemId, &graphicsRequirements));
+#endif
 
     // Create the EGL Context
     app.Egl.CreateContext(nullptr);
@@ -1247,20 +1541,27 @@ void android_main(struct android_app* androidApp) {
 
     app.CpuLevel = CPU_LEVEL;
     app.GpuLevel = GPU_LEVEL;
+#if defined(ANDROID)
     app.MainThreadTid = gettid();
+#else
+    app.MainThreadTid = (int)std::hash<std::thread::id>{}(std::this_thread::get_id());
+#endif // defined(ANDROID)
 
     app.SystemId = systemId;
 
     // Create the OpenXR Session.
-    XrGraphicsBindingOpenGLESAndroidKHR graphicsBinding = {};
-    graphicsBinding.type = XR_TYPE_GRAPHICS_BINDING_OPENGL_ES_ANDROID_KHR;
-    graphicsBinding.next = NULL;
+#if defined(XR_USE_GRAPHICS_API_OPENGL_ES)
+    XrGraphicsBindingOpenGLESAndroidKHR graphicsBinding = {XR_TYPE_GRAPHICS_BINDING_OPENGL_ES_ANDROID_KHR};
     graphicsBinding.display = app.Egl.Display;
     graphicsBinding.config = app.Egl.Config;
     graphicsBinding.context = app.Egl.Context;
+#elif defined(XR_USE_GRAPHICS_API_OPENGL)
+    XrGraphicsBindingOpenGLWin32KHR graphicsBinding = {XR_TYPE_GRAPHICS_BINDING_OPENGL_WIN32_KHR};
+    graphicsBinding.hDC = app.Egl.hDC;
+    graphicsBinding.hGLRC = app.Egl.hGLRC;
+#endif //
 
-    XrSessionCreateInfo sessionCreateInfo = {};
-    sessionCreateInfo.type = XR_TYPE_SESSION_CREATE_INFO;
+    XrSessionCreateInfo sessionCreateInfo = {XR_TYPE_SESSION_CREATE_INFO};
     sessionCreateInfo.next = &graphicsBinding;
     sessionCreateInfo.createFlags = 0;
     sessionCreateInfo.systemId = app.SystemId;
@@ -1273,7 +1574,7 @@ void android_main(struct android_app* androidApp) {
 
     // App only supports the primary stereo view config.
     const XrViewConfigurationType supportedViewConfigType =
-            XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO;
+        XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO;
 
     // Enumerate the viewport configurations.
     uint32_t viewportConfigTypeCount = 0;
@@ -1282,11 +1583,11 @@ void android_main(struct android_app* androidApp) {
     auto viewportConfigurationTypes = new XrViewConfigurationType[viewportConfigTypeCount];
 
     OXR(xrEnumerateViewConfigurations(
-            instance,
-            app.SystemId,
-            viewportConfigTypeCount,
-            &viewportConfigTypeCount,
-            viewportConfigurationTypes));
+        instance,
+        app.SystemId,
+        viewportConfigTypeCount,
+        &viewportConfigTypeCount,
+        viewportConfigurationTypes));
 
     ALOGV("Available Viewport Configuration Types: %d", viewportConfigTypeCount);
 
@@ -1294,22 +1595,21 @@ void android_main(struct android_app* androidApp) {
         const XrViewConfigurationType viewportConfigType = viewportConfigurationTypes[i];
 
         ALOGV(
-                "Viewport configuration type %d : %s",
-                viewportConfigType,
-                viewportConfigType == supportedViewConfigType ? "Selected" : "");
+            "Viewport configuration type %d : %s",
+            viewportConfigType,
+            viewportConfigType == supportedViewConfigType ? "Selected" : "");
 
-        XrViewConfigurationProperties viewportConfig;
-        viewportConfig.type = XR_TYPE_VIEW_CONFIGURATION_PROPERTIES;
+        XrViewConfigurationProperties viewportConfig = {XR_TYPE_VIEW_CONFIGURATION_PROPERTIES};
         OXR(xrGetViewConfigurationProperties(
-                instance, app.SystemId, viewportConfigType, &viewportConfig));
+            instance, app.SystemId, viewportConfigType, &viewportConfig));
         ALOGV(
-                "FovMutable=%s ConfigurationType %d",
-                viewportConfig.fovMutable ? "true" : "false",
-                viewportConfig.viewConfigurationType);
+            "FovMutable=%s ConfigurationType %d",
+            viewportConfig.fovMutable ? "true" : "false",
+            viewportConfig.viewConfigurationType);
 
         uint32_t viewCount;
         OXR(xrEnumerateViewConfigurationViews(
-                instance, app.SystemId, viewportConfigType, 0, &viewCount, NULL));
+            instance, app.SystemId, viewportConfigType, 0, &viewCount, NULL));
 
         if (viewCount > 0) {
             auto elements = new XrViewConfigurationView[viewCount];
@@ -1320,25 +1620,25 @@ void android_main(struct android_app* androidApp) {
             }
 
             OXR(xrEnumerateViewConfigurationViews(
-                    instance, app.SystemId, viewportConfigType, viewCount, &viewCount, elements));
+                instance, app.SystemId, viewportConfigType, viewCount, &viewCount, elements));
 
             // Log the view config info for each view type for debugging purposes.
             for (uint32_t e = 0; e < viewCount; e++) {
                 const XrViewConfigurationView* element = &elements[e];
 
                 ALOGV(
-                        "Viewport [%d]: Recommended Width=%d Height=%d SampleCount=%d",
-                        e,
-                        element->recommendedImageRectWidth,
-                        element->recommendedImageRectHeight,
-                        element->recommendedSwapchainSampleCount);
+                    "Viewport [%d]: Recommended Width=%d Height=%d SampleCount=%d",
+                    e,
+                    element->recommendedImageRectWidth,
+                    element->recommendedImageRectHeight,
+                    element->recommendedSwapchainSampleCount);
 
                 ALOGV(
-                        "Viewport [%d]: Max Width=%d Height=%d SampleCount=%d",
-                        e,
-                        element->maxImageRectWidth,
-                        element->maxImageRectHeight,
-                        element->maxSwapchainSampleCount);
+                    "Viewport [%d]: Max Width=%d Height=%d SampleCount=%d",
+                    e,
+                    element->maxImageRectWidth,
+                    element->maxImageRectHeight,
+                    element->maxSwapchainSampleCount);
             }
 
             // Cache the view config properties for the selected config type.
@@ -1361,7 +1661,7 @@ void android_main(struct android_app* androidApp) {
     app.ViewportConfig.type = XR_TYPE_VIEW_CONFIGURATION_PROPERTIES;
 
     OXR(xrGetViewConfigurationProperties(
-            instance, app.SystemId, supportedViewConfigType, &app.ViewportConfig));
+        instance, app.SystemId, supportedViewConfigType, &app.ViewportConfig));
 
     bool stageSupported = false;
 
@@ -1371,7 +1671,7 @@ void android_main(struct android_app* androidApp) {
     auto referenceSpaces = new XrReferenceSpaceType[numOutputSpaces];
 
     OXR(xrEnumerateReferenceSpaces(
-            app.Session, numOutputSpaces, &numOutputSpaces, referenceSpaces));
+        app.Session, numOutputSpaces, &numOutputSpaces, referenceSpaces));
 
     for (uint32_t i = 0; i < numOutputSpaces; i++) {
         if (referenceSpaces[i] == XR_REFERENCE_SPACE_TYPE_STAGE) {
@@ -1383,8 +1683,7 @@ void android_main(struct android_app* androidApp) {
     delete[] referenceSpaces;
 
     // Create a space to the first path
-    XrReferenceSpaceCreateInfo spaceCreateInfo = {};
-    spaceCreateInfo.type = XR_TYPE_REFERENCE_SPACE_CREATE_INFO;
+    XrReferenceSpaceCreateInfo spaceCreateInfo = {XR_TYPE_REFERENCE_SPACE_CREATE_INFO};
     spaceCreateInfo.referenceSpaceType = XR_REFERENCE_SPACE_TYPE_VIEW;
     spaceCreateInfo.poseInReferenceSpace.orientation.w = 1.0f;
     OXR(xrCreateReferenceSpace(app.Session, &spaceCreateInfo, &app.HeadSpace));
@@ -1408,10 +1707,9 @@ void android_main(struct android_app* androidApp) {
     int width = app.ViewConfigurationView[0].recommendedImageRectWidth;
     int height = app.ViewConfigurationView[0].recommendedImageRectHeight;
 
-    XrSwapchainCreateInfo swapChainCreateInfo = {};
-    swapChainCreateInfo.type = XR_TYPE_SWAPCHAIN_CREATE_INFO;
+    XrSwapchainCreateInfo swapChainCreateInfo = {XR_TYPE_SWAPCHAIN_CREATE_INFO};
     swapChainCreateInfo.usageFlags =
-            XR_SWAPCHAIN_USAGE_SAMPLED_BIT | XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT;
+        XR_SWAPCHAIN_USAGE_SAMPLED_BIT | XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT;
     swapChainCreateInfo.format = format;
     swapChainCreateInfo.sampleCount = 1;
     swapChainCreateInfo.width = width;
@@ -1423,17 +1721,25 @@ void android_main(struct android_app* androidApp) {
     // Create the swapchain.
     OXR(xrCreateSwapchain(app.Session, &swapChainCreateInfo, &app.ColorSwapChain));
     OXR(xrEnumerateSwapchainImages(app.ColorSwapChain, 0, &app.SwapChainLength, nullptr));
+#if defined(XR_USE_GRAPHICS_API_OPENGL_ES)
     auto images = new XrSwapchainImageOpenGLESKHR[app.SwapChainLength];
+#elif defined(XR_USE_GRAPHICS_API_OPENGL)
+    auto images = new XrSwapchainImageOpenGLKHR[app.SwapChainLength];
+#endif
     // Populate the swapchain image array.
     for (uint32_t i = 0; i < app.SwapChainLength; i++) {
+#if defined(XR_USE_GRAPHICS_API_OPENGL_ES)
         images[i] = {XR_TYPE_SWAPCHAIN_IMAGE_OPENGL_ES_KHR};
+#elif defined(XR_USE_GRAPHICS_API_OPENGL)
+        images[i] = {XR_TYPE_SWAPCHAIN_IMAGE_OPENGL_KHR};
+#endif
     }
 
     OXR(xrEnumerateSwapchainImages(
-            app.ColorSwapChain,
-            app.SwapChainLength,
-            &app.SwapChainLength,
-            (XrSwapchainImageBaseHeader*)images));
+        app.ColorSwapChain,
+        app.SwapChainLength,
+        &app.SwapChainLength,
+        (XrSwapchainImageBaseHeader*)images));
 
     auto colorTextures = new GLuint[app.SwapChainLength];
     for (uint32_t i = 0; i < app.SwapChainLength; i++) {
@@ -1441,13 +1747,15 @@ void android_main(struct android_app* androidApp) {
     }
 
     app.AppRenderer.Create(
-            format, width, height, NUM_MULTI_SAMPLES, app.SwapChainLength, colorTextures);
+        format, width, height, NUM_MULTI_SAMPLES, app.SwapChainLength, colorTextures);
 
     delete[] images;
     delete[] colorTextures;
 
+#if defined(ANDROID)
     androidApp->userData = &app;
     androidApp->onAppCmd = app_handle_cmd;
+#endif // defined(ANDROID)
 
     bool stageBoundsDirty = true;
 
@@ -1460,69 +1768,83 @@ void android_main(struct android_app* androidApp) {
 
     /// Hook up extensions for passthrough
     OXR(xrGetInstanceProcAddr(
-            instance,
-            "xrCreatePassthroughFB",
-            (PFN_xrVoidFunction*)(&app.FunPtrs.xrCreatePassthroughFB)));
+        instance,
+        "xrCreatePassthroughFB",
+        (PFN_xrVoidFunction*)(&app.FunPtrs.xrCreatePassthroughFB)));
     OXR(xrGetInstanceProcAddr(
-            instance,
-            "xrDestroyPassthroughFB",
-            (PFN_xrVoidFunction*)(&app.FunPtrs.xrDestroyPassthroughFB)));
+        instance,
+        "xrDestroyPassthroughFB",
+        (PFN_xrVoidFunction*)(&app.FunPtrs.xrDestroyPassthroughFB)));
     OXR(xrGetInstanceProcAddr(
-            instance,
-            "xrCreatePassthroughLayerFB",
-            (PFN_xrVoidFunction*)(&app.FunPtrs.xrCreatePassthroughLayerFB)));
+        instance,
+        "xrCreatePassthroughLayerFB",
+        (PFN_xrVoidFunction*)(&app.FunPtrs.xrCreatePassthroughLayerFB)));
     OXR(xrGetInstanceProcAddr(
-            instance,
-            "xrDestroyPassthroughLayerFB",
-            (PFN_xrVoidFunction*)(&app.FunPtrs.xrDestroyPassthroughLayerFB)));
+        instance,
+        "xrDestroyPassthroughLayerFB",
+        (PFN_xrVoidFunction*)(&app.FunPtrs.xrDestroyPassthroughLayerFB)));
     OXR(xrGetInstanceProcAddr(
-            instance,
-            "xrPassthroughLayerResumeFB",
-            (PFN_xrVoidFunction*)(&app.FunPtrs.xrPassthroughLayerResumeFB)));
+        instance,
+        "xrPassthroughLayerResumeFB",
+        (PFN_xrVoidFunction*)(&app.FunPtrs.xrPassthroughLayerResumeFB)));
     OXR(xrGetInstanceProcAddr(
-            instance,
-            "xrPassthroughLayerPauseFB",
-            (PFN_xrVoidFunction*)(&app.FunPtrs.xrPassthroughLayerPauseFB)));
+        instance,
+        "xrPassthroughLayerPauseFB",
+        (PFN_xrVoidFunction*)(&app.FunPtrs.xrPassthroughLayerPauseFB)));
     OXR(xrGetInstanceProcAddr(
-            instance,
-            "xrPassthroughLayerSetStyleFB",
-            (PFN_xrVoidFunction*)(&app.FunPtrs.xrPassthroughLayerSetStyleFB)));
+        instance,
+        "xrPassthroughLayerSetStyleFB",
+        (PFN_xrVoidFunction*)(&app.FunPtrs.xrPassthroughLayerSetStyleFB)));
     OXR(xrGetInstanceProcAddr(
-            instance,
-            "xrPassthroughStartFB",
-            (PFN_xrVoidFunction*)(&app.FunPtrs.xrPassthroughStartFB)));
+        instance,
+        "xrPassthroughStartFB",
+        (PFN_xrVoidFunction*)(&app.FunPtrs.xrPassthroughStartFB)));
     OXR(xrGetInstanceProcAddr(
-            instance,
-            "xrPassthroughPauseFB",
-            (PFN_xrVoidFunction*)(&app.FunPtrs.xrPassthroughPauseFB)));
+        instance,
+        "xrPassthroughPauseFB",
+        (PFN_xrVoidFunction*)(&app.FunPtrs.xrPassthroughPauseFB)));
 
     /// Hook up extensions for spatial entity
     OXR(xrGetInstanceProcAddr(
-            instance,
-            "xrCreateSpatialAnchorFB",
-            (PFN_xrVoidFunction*)(&app.FunPtrs.xrCreateSpatialAnchorFB)));
+        instance,
+        "xrCreateSpatialAnchorFB",
+        (PFN_xrVoidFunction*)(&app.FunPtrs.xrCreateSpatialAnchorFB)));
     OXR(xrGetInstanceProcAddr(
-            instance,
-            "xrEnumerateSpaceSupportedComponentsFB",
-            (PFN_xrVoidFunction*)(&app.FunPtrs.xrEnumerateSpaceSupportedComponentsFB)));
+        instance, "xrGetSpaceUuidFB", (PFN_xrVoidFunction*)(&app.FunPtrs.xrGetSpaceUuidFB)));
     OXR(xrGetInstanceProcAddr(
-            instance,
-            "xrGetSpaceComponentStatusFB",
-            (PFN_xrVoidFunction*)(&app.FunPtrs.xrGetSpaceComponentStatusFB)));
+        instance,
+        "xrEnumerateSpaceSupportedComponentsFB",
+        (PFN_xrVoidFunction*)(&app.FunPtrs.xrEnumerateSpaceSupportedComponentsFB)));
     OXR(xrGetInstanceProcAddr(
-            instance,
-            "xrSetSpaceComponentStatusFB",
-            (PFN_xrVoidFunction*)(&app.FunPtrs.xrSetSpaceComponentStatusFB)));
+        instance,
+        "xrGetSpaceComponentStatusFB",
+        (PFN_xrVoidFunction*)(&app.FunPtrs.xrGetSpaceComponentStatusFB)));
     OXR(xrGetInstanceProcAddr(
-            instance, "xrQuerySpacesFB", (PFN_xrVoidFunction*)(&app.FunPtrs.xrQuerySpacesFB)));
+        instance,
+        "xrSetSpaceComponentStatusFB",
+        (PFN_xrVoidFunction*)(&app.FunPtrs.xrSetSpaceComponentStatusFB)));
     OXR(xrGetInstanceProcAddr(
-            instance,
-            "xrRetrieveSpaceQueryResultsFB",
-            (PFN_xrVoidFunction*)(&app.FunPtrs.xrRetrieveSpaceQueryResultsFB)));
+        instance, "xrQuerySpacesFB", (PFN_xrVoidFunction*)(&app.FunPtrs.xrQuerySpacesFB)));
     OXR(xrGetInstanceProcAddr(
-            instance, "xrSaveSpaceFB", (PFN_xrVoidFunction*)(&app.FunPtrs.xrSaveSpaceFB)));
+        instance,
+        "xrRetrieveSpaceQueryResultsFB",
+        (PFN_xrVoidFunction*)(&app.FunPtrs.xrRetrieveSpaceQueryResultsFB)));
     OXR(xrGetInstanceProcAddr(
-            instance, "xrEraseSpaceFB", (PFN_xrVoidFunction*)(&app.FunPtrs.xrEraseSpaceFB)));
+        instance, "xrSaveSpaceFB", (PFN_xrVoidFunction*)(&app.FunPtrs.xrSaveSpaceFB)));
+    OXR(xrGetInstanceProcAddr(
+        instance, "xrEraseSpaceFB", (PFN_xrVoidFunction*)(&app.FunPtrs.xrEraseSpaceFB)));
+    OXR(xrGetInstanceProcAddr(
+        instance, "xrSaveSpaceListFB", (PFN_xrVoidFunction*)(&app.FunPtrs.xrSaveSpaceListFB)));
+    OXR(xrGetInstanceProcAddr(
+        instance, "xrCreateSpaceUserFB", (PFN_xrVoidFunction*)(&app.FunPtrs.xrCreateSpaceUserFB)));
+    OXR(xrGetInstanceProcAddr(
+        instance, "xrGetSpaceUserIdFB", (PFN_xrVoidFunction*)(&app.FunPtrs.xrGetSpaceUserIdFB)));
+    OXR(xrGetInstanceProcAddr(
+        instance,
+        "xrDestroySpaceUserFB",
+        (PFN_xrVoidFunction*)(&app.FunPtrs.xrDestroySpaceUserFB)));
+    OXR(xrGetInstanceProcAddr(
+        instance, "xrShareSpacesFB", (PFN_xrVoidFunction*)(&app.FunPtrs.xrShareSpacesFB)));
 
     // Create and start passthrough
     XrPassthroughFB passthrough = XR_NULL_HANDLE;
@@ -1554,6 +1876,16 @@ void android_main(struct android_app* androidApp) {
         }
     }
 
+    // Initialize lists for Shared Spatial Anchors
+    if (!app.ExternalDataHandler->LoadShareUserList(app.ShareUserList)) {
+        ALOGW("Failed to load list of users to share Spatial Anchors with");
+        app.ShareUserList.clear();
+    }
+    if (!app.ExternalDataHandler->LoadInboundSpatialAnchorList(app.InboundSpatialAnchorList)) {
+        ALOGW("Failed to load list of Spatial Anchors shared with current user");
+        app.InboundSpatialAnchorList.clear();
+    }
+
     // Controller button states
     bool aButtonVal = false;
     bool aPrevButtonVal = false;
@@ -1561,11 +1893,18 @@ void android_main(struct android_app* androidApp) {
     bool bPrevButtonVal = false;
     bool xButtonVal = false;
     bool xPrevButtonVal = false;
+    bool yButtonVal = false;
+    bool yPrevButtonVal = false;
 
+#if defined(XR_USE_PLATFORM_ANDROID)
     while (androidApp->destroyRequested == 0)
+#else
+    while (true)
+#endif
     {
         frameCount++;
 
+#if defined(XR_USE_PLATFORM_ANDROID)
         // Read all pending events.
         for (;;) {
             int events;
@@ -1574,8 +1913,8 @@ void android_main(struct android_app* androidApp) {
             // If the timeout is negative, waits indefinitely until an event appears.
             const int timeoutMilliseconds = (app.Resumed == false && app.SessionActive == false &&
                                              androidApp->destroyRequested == 0)
-                                            ? -1
-                                            : 0;
+                ? -1
+                : 0;
             if (ALooper_pollAll(timeoutMilliseconds, NULL, &events, (void**)&source) < 0) {
                 break;
             }
@@ -1585,6 +1924,17 @@ void android_main(struct android_app* androidApp) {
                 source->process(androidApp, source);
             }
         }
+#elif defined(XR_USE_PLATFORM_WIN32)
+        MSG msg;
+        while (::PeekMessage(&msg, NULL, 0, 0, PM_REMOVE) > 0) {
+            if (msg.message == WM_QUIT) {
+                app.ShouldExit = true;
+            } else {
+                ::TranslateMessage(&msg);
+                ::DispatchMessage(&msg);
+            }
+        }
+#endif
 
         app.HandleXrEvents();
 
@@ -1614,19 +1964,20 @@ void android_main(struct android_app* androidApp) {
             // This is called after the app starts, or after Button X is pressed.
             app.AppRenderer.Scene.SpaceList.clear();
             QueryAnchors(app);
+            DownloadAnchors(app);
             app.ShouldQueryAnchors = false;
         }
 
+        if (app.ShouldShareAnchors) {
+            UploadAndShareAnchors(app);
+            app.ShouldShareAnchors = false;
+        }
 
         // NOTE: OpenXR does not use the concept of frame indices. Instead,
         // XrWaitFrame returns the predicted display time.
-        XrFrameWaitInfo waitFrameInfo = {};
-        waitFrameInfo.type = XR_TYPE_FRAME_WAIT_INFO;
-        waitFrameInfo.next = NULL;
+        XrFrameWaitInfo waitFrameInfo = {XR_TYPE_FRAME_WAIT_INFO};
 
-        XrFrameState frameState = {};
-        frameState.type = XR_TYPE_FRAME_STATE;
-        frameState.next = NULL;
+        XrFrameState frameState = {XR_TYPE_FRAME_STATE};
 
         OXR(xrWaitFrame(app.Session, &waitFrameInfo, &frameState));
 
@@ -1634,20 +1985,16 @@ void android_main(struct android_app* androidApp) {
         // the new eye images will be displayed. The number of frames predicted ahead
         // depends on the pipeline depth of the engine and the synthesis rate.
         // The better the prediction, the less black will be pulled in at the edges.
-        XrFrameBeginInfo beginFrameDesc = {};
-        beginFrameDesc.type = XR_TYPE_FRAME_BEGIN_INFO;
-        beginFrameDesc.next = NULL;
+        XrFrameBeginInfo beginFrameDesc = {XR_TYPE_FRAME_BEGIN_INFO};
         OXR(xrBeginFrame(app.Session, &beginFrameDesc));
 
-        XrSpaceLocation loc = {};
-        loc.type = XR_TYPE_SPACE_LOCATION;
+        XrSpaceLocation loc = {XR_TYPE_SPACE_LOCATION};
         OXR(xrLocateSpace(app.HeadSpace, app.LocalSpace, frameState.predictedDisplayTime, &loc));
         XrPosef xfLocalFromHead = loc.pose;
 
         XrViewState viewState = {XR_TYPE_VIEW_STATE, NULL};
 
-        XrViewLocateInfo projectionInfo = {};
-        projectionInfo.type = XR_TYPE_VIEW_LOCATE_INFO;
+        XrViewLocateInfo projectionInfo = {XR_TYPE_VIEW_LOCATE_INFO};
         projectionInfo.viewConfigurationType = app.ViewportConfig.viewConfigurationType;
         projectionInfo.displayTime = frameState.predictedDisplayTime;
         projectionInfo.space = app.HeadSpace;
@@ -1656,12 +2003,12 @@ void android_main(struct android_app* androidApp) {
         uint32_t projectionCountOutput = projectionCapacityInput;
 
         OXR(xrLocateViews(
-                app.Session,
-                &projectionInfo,
-                &viewState,
-                projectionCapacityInput,
-                &projectionCountOutput,
-                projections));
+            app.Session,
+            &projectionInfo,
+            &viewState,
+            projectionCapacityInput,
+            &projectionCountOutput,
+            projections));
 
         auto& scene = app.AppRenderer.Scene;
         scene.CubeData.clear();
@@ -1673,8 +2020,7 @@ void android_main(struct android_app* androidApp) {
             for (XrSpace space : scene.SpaceList) {
                 // If anchor was placed, just update the anchor location
                 // Updating it regularly will prevent drift
-                XrSpaceLocation persistedAnchorLoc = {};
-                persistedAnchorLoc.type = XR_TYPE_SPACE_LOCATION;
+                XrSpaceLocation persistedAnchorLoc = {XR_TYPE_SPACE_LOCATION};
                 XrResult res = XR_SUCCESS;
                 OXR(res = xrLocateSpace(
                         space,
@@ -1695,6 +2041,7 @@ void android_main(struct android_app* androidApp) {
         // A Button: Place a world locked anchor.
         // B Button: Destroy the last-placed anchor.
         // X Button: Refresh anchors by querying them.
+        // Y Button: Share all loaded anchors.
         if (input != nullptr) {
             aPrevButtonVal = aButtonVal;
             aButtonVal = input->A();
@@ -1714,6 +2061,11 @@ void android_main(struct android_app* androidApp) {
                 app.ShouldQueryAnchors = true;
             }
 
+            yPrevButtonVal = yButtonVal;
+            yButtonVal = input->Y();
+            if (yPrevButtonVal != yButtonVal && yPrevButtonVal) {
+                app.ShouldShareAnchors = true;
+            }
         }
 
         // Simple animation
@@ -1733,11 +2085,12 @@ void android_main(struct android_app* androidApp) {
         for (int eye = 0; eye < NUM_EYES; eye++) {
             // LOG_POSE( "viewTransform", &projectionInfo.projections[eye].viewTransform );
             XrPosef xfHeadFromEye = projections[eye].pose;
-            xfLocalFromEye[eye] = XrPosef_Multiply(xfLocalFromHead, xfHeadFromEye);
+            XrPosef_Multiply(&xfLocalFromEye[eye], &xfLocalFromHead, &xfHeadFromEye);
 
             XrPosef xfEyeFromLocal = XrPosef_Inverse(xfLocalFromEye[eye]);
 
-            XrMatrix4x4f viewMat = XrMatrix4x4f_CreateFromRigidTransform(&xfEyeFromLocal);
+            XrMatrix4x4f viewMat{};
+            XrMatrix4x4f_CreateFromRigidTransform(&viewMat, &xfEyeFromLocal);
 
             const XrFovf fov = projections[eye].fov;
             XrMatrix4x4f projMat;
@@ -1748,10 +2101,9 @@ void android_main(struct android_app* androidApp) {
         }
 
         if (app.StageSpace != XR_NULL_HANDLE) {
-            loc = {};
-            loc.type = XR_TYPE_SPACE_LOCATION;
+            loc = {XR_TYPE_SPACE_LOCATION};
             OXR(xrLocateSpace(
-                    app.StageSpace, app.LocalSpace, frameState.predictedDisplayTime, &loc));
+                app.StageSpace, app.LocalSpace, frameState.predictedDisplayTime, &loc));
             XrPosef xfLocalFromStage = loc.pose;
 
             frameIn.HasStage = true;
@@ -1761,9 +2113,7 @@ void android_main(struct android_app* androidApp) {
             frameIn.HasStage = false;
         }
 
-        XrSwapchainImageWaitInfo waitInfo;
-        waitInfo.type = XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO;
-        waitInfo.next = NULL;
+        XrSwapchainImageWaitInfo waitInfo = {XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO};
         waitInfo.timeout = 1000000000; /* timeout in nanoseconds */
         XrResult res = xrWaitSwapchainImage(app.ColorSwapChain, &waitInfo);
         int retry = 0;
@@ -1771,9 +2121,9 @@ void android_main(struct android_app* androidApp) {
             res = xrWaitSwapchainImage(app.ColorSwapChain, &waitInfo);
             retry++;
             ALOGV(
-                    " Retry xrWaitSwapchainImage %d times due to XR_TIMEOUT_EXPIRED (duration %f seconds)",
-                    retry,
-                    waitInfo.timeout * (1E-9));
+                " Retry xrWaitSwapchainImage %d times due to XR_TIMEOUT_EXPIRED (duration %f seconds)",
+                retry,
+                waitInfo.timeout * (1E-9));
         }
 
         app.AppRenderer.RenderFrame(frameIn);
@@ -1792,16 +2142,14 @@ void android_main(struct android_app* androidApp) {
 
         // passthrough layer is backmost layer (if available)
         if (reconPassthroughLayer != XR_NULL_HANDLE) {
-            XrCompositionLayerPassthroughFB passthrough_layer = {};
-            passthrough_layer.type = XR_TYPE_COMPOSITION_LAYER_PASSTHROUGH_FB;
+            XrCompositionLayerPassthroughFB passthrough_layer = {XR_TYPE_COMPOSITION_LAYER_PASSTHROUGH_FB};
             passthrough_layer.layerHandle = reconPassthroughLayer;
             passthrough_layer.flags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;
             passthrough_layer.space = XR_NULL_HANDLE;
             app.Layers[app.LayerCount++].Passthrough = passthrough_layer;
         }
 
-        XrCompositionLayerProjection proj_layer = {};
-        proj_layer.type = XR_TYPE_COMPOSITION_LAYER_PROJECTION;
+        XrCompositionLayerProjection proj_layer = {XR_TYPE_COMPOSITION_LAYER_PROJECTION};
         proj_layer.layerFlags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;
         proj_layer.layerFlags |= XR_COMPOSITION_LAYER_CORRECT_CHROMATIC_ABERRATION_BIT;
         proj_layer.space = app.LocalSpace;
@@ -1810,8 +2158,7 @@ void android_main(struct android_app* androidApp) {
 
         for (int eye = 0; eye < NUM_EYES; eye++) {
             XrCompositionLayerProjectionView& proj_view = proj_views[eye];
-            proj_view = {};
-            proj_view.type = XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW;
+            proj_view = {XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW};
             proj_view.pose = xfLocalFromEye[eye];
             proj_view.fov = projections[eye].fov;
 
@@ -1831,8 +2178,7 @@ void android_main(struct android_app* androidApp) {
             layers[i] = (const XrCompositionLayerBaseHeader*)&app.Layers[i];
         }
 
-        XrFrameEndInfo endFrameInfo = {};
-        endFrameInfo.type = XR_TYPE_FRAME_END_INFO;
+        XrFrameEndInfo endFrameInfo = {XR_TYPE_FRAME_END_INFO};
         endFrameInfo.displayTime = frameState.predictedDisplayTime;
         endFrameInfo.environmentBlendMode = XR_ENVIRONMENT_BLEND_MODE_OPAQUE;
         endFrameInfo.layerCount = app.LayerCount;
@@ -1860,5 +2206,7 @@ void android_main(struct android_app* androidApp) {
     OXR(xrDestroySession(app.Session));
     OXR(xrDestroyInstance(instance));
 
+#if defined(XR_USE_PLATFORM_ANDROID)
     (*androidApp->activity->vm).DetachCurrentThread();
+#endif // defined(XR_USE_PLATFORM_ANDROID)
 }
